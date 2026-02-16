@@ -1,6 +1,24 @@
 // client.js
 const socket = io();
 
+socket.on("connect", () => {
+  console.log("✓ Socket.IO verbunden:", socket.id);
+});
+
+socket.on("disconnect", (reason) => {
+  console.log("✗ Socket.IO getrennt:", reason);
+  updateConnectionStatus(false);
+});
+
+socket.on("connect_error", (error) => {
+  console.error("✗ Socket.IO Verbindungsfehler:", error);
+  alert("Verbindungsfehler zu Server: " + error.message);
+});
+
+socket.on("error", (error) => {
+  console.error("✗ Socket.IO Fehler:", error);
+});
+
 let localStream;
 let peerConnection;
 let screenStream;
@@ -38,6 +56,21 @@ const configuration = {
 
 // Flag um doppelte Renegotiation zu verhindern
 let isNegotiating = false;
+
+// ---- Opus HD Audio SDP Optimierung ----
+function optimizeAudioSDP(sdp) {
+  // Opus auf maximale Qualität setzen: Stereo, 510kbps, 48kHz
+  sdp = sdp.replace(
+    /a=fmtp:111 minptime=10;useinbandfec=1/g,
+    'a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;maxaveragebitrate=510000;maxplaybackrate=48000;cbr=0'
+  );
+  // Fallback: Falls das Format leicht anders ist
+  sdp = sdp.replace(
+    /a=fmtp:111 minptime=10/g,
+    'a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;maxaveragebitrate=510000;maxplaybackrate=48000;cbr=0'
+  );
+  return sdp;
+}
 
 // ---- UI Elemente ----
 const joinBtn = document.getElementById("joinBtn");
@@ -275,7 +308,7 @@ function createVideoContainer(stream, label, isLocal = false) {
       document.exitFullscreen();
     } else {
       container.requestFullscreen();
-      video.muted = false;
+      // Video NICHT unmuten - Screen Share Audio läuft separat über audio Element
       video.play().catch(() => {});
     }
   };
@@ -321,6 +354,7 @@ async function createPeerConnection() {
     isNegotiating = true;
     try {
       const offer = await peerConnection.createOffer();
+      offer.sdp = optimizeAudioSDP(offer.sdp); // Apply SDP optimization
       await peerConnection.setLocalDescription(offer);
       socket.emit("signal", { offer });
     } finally {
@@ -345,10 +379,26 @@ async function createPeerConnection() {
     const hasAudio = stream.getAudioTracks().length > 0;
     
     if (hasVideo) {
-      createVideoContainer(stream, "Remote Screen", false);
+      // Screen Share: Video-Element IMMER muten um Echo zu verhindern
+      // System-Audio enthält den Call-Audio → würde sich selbst hören
+      const container = createVideoContainer(stream, "Remote Screen", false);
+      const video = container.querySelector("video");
+      video.muted = true; // Echo verhindern!
+      
+      // Screen-Share-Audio separat abspielen (nur wenn Audio vorhanden)
+      if (hasAudio) {
+        // Neuen Audio-only Stream erstellen nur mit Audio-Tracks
+        const audioOnlyStream = new MediaStream(stream.getAudioTracks());
+        const screenAudio = document.createElement("audio");
+        screenAudio.srcObject = audioOnlyStream;
+        screenAudio.autoplay = true;
+        screenAudio.volume = 1;
+        screenAudio.dataset.streamId = stream.id;
+        document.body.appendChild(screenAudio);
+      }
     }
     
-    // Audio-Stream dem ersten Remote User zuweisen
+    // Audio-Stream dem ersten Remote User zuweisen (Mikrofon-Audio, kein Screen)
     if (hasAudio && !hasVideo) {
       // Audio zu vorhandenem User-Tile zuweisen
       userAudioElements.forEach((audio, oderId) => {
@@ -363,8 +413,9 @@ async function createPeerConnection() {
     stream.onremovetrack = () => {
       if (stream.getTracks().length === 0) {
         removeVideoContainer(stream.id);
-        const audio = document.querySelector(`audio[data-stream-id="${stream.id}"]`);
-        if (audio) audio.remove();
+        // Auch separates Screen-Audio entfernen
+        const screenAudio = document.querySelector(`audio[data-stream-id="${stream.id}"]`);
+        if (screenAudio) screenAudio.remove();
       }
     };
   };
@@ -381,20 +432,38 @@ joinBtn.onclick = async () => {
   }
 
   try {
-    // Mikrofon holen
+    // Mikrofon holen - die Prüfung wird durch den tatsächlichen Versuch ersetzt
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("getUserMedia wird von diesem Browser nicht unterstützt");
+    }
+
     localStream = await navigator.mediaDevices.getUserMedia({ 
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
-        autoGainControl: true
+        autoGainControl: true,
+        sampleRate: 48000,
+        sampleSize: 16,
+        channelCount: 2
       }
     });
 
     // PeerConnection erstellen
     await createPeerConnection();
 
-    // Lokale Audio-Tracks hinzufügen
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    // Lokale Audio-Tracks hinzufügen mit hoher Bitrate
+    localStream.getTracks().forEach(track => {
+      const sender = peerConnection.addTrack(track, localStream);
+      // Audio Encoding für hohe Qualität optimieren
+      if (track.kind === 'audio') {
+        const params = sender.getParameters();
+        if (!params.encodings || params.encodings.length === 0) {
+          params.encodings = [{}];
+        }
+        params.encodings[0].maxBitrate = 510000; // 510 kbps Opus max
+        sender.setParameters(params).catch(() => {});
+      }
+    });
     
     // Eigene User-Tile erstellen mit Profilbild
     createUserTile(socket.id, username, true, userProfilePic);
@@ -408,7 +477,25 @@ joinBtn.onclick = async () => {
     
   } catch (err) {
     console.error("Fehler beim Joinen:", err);
-    alert("Konnte nicht beitreten: " + err.message);
+    
+    // Benutzerfreundliche Fehlermeldungen
+    let errorMsg = err.message;
+    
+    if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+      errorMsg = "Zugriff auf Mikrofon verweigert. Bitte erlaube den Zugriff in den Browser-Einstellungen oder Systemeinstellungen.";
+    } else if (err.name === "NotFoundError") {
+      errorMsg = "Kein Mikrofon gefunden. Bitte verbinde ein Mikrofon.";
+    } else if (err.name === "NotReadableError") {
+      errorMsg = "Mikrofon wird bereits von einer anderen Anwendung verwendet. Bitte schließe diese und versuche es erneut.";
+    } else if (err.name === "SecurityError") {
+      errorMsg = "Sicherheitsfehler: Bitte stelle sicher, dass du HTTPS verwendest (außer localhost). Auf macOS: Überprüfe die Systemeinstellungen > Sicherheit & Datenschutz > Mikrofon.";
+    } else if (err.name === "TypeError" || !navigator.mediaDevices) {
+      errorMsg = "Dein Browser unterstützt keine Echtzeitkommunikation. Bitte nutze Chrome, Firefox oder Edge (neuste Version). Auf macOS: Stelle sicher, dass Safari aktualisiert ist und die Berechtigungen erteilt hat.";
+    } else if (err.message && err.message.includes("getUserMedia")) {
+      errorMsg = "Fehler beim Zugriff auf Mikrofon: " + err.message + ". Überprüfe deine Browser- und Systemeinstellungen.";
+    }
+    
+    alert("Konnte nicht beitreten: " + errorMsg);
   }
 };
 
@@ -435,7 +522,9 @@ screenBtn.onclick = async () => {
   }
 
   try {
-    // Bildschirm + Systemaudio holen mit hoher FPS
+    // Bildschirm + Audio holen mit hoher FPS
+    // selfBrowserSurface: "exclude" verhindert dass der eigene Tab geteilt wird
+    // systemAudio: "exclude" verhindert Echo (System-Audio enthält Call-Audio!)
     screenStream = await navigator.mediaDevices.getDisplayMedia({ 
       video: {
         frameRate: { ideal: 60, max: 60 },
@@ -446,18 +535,19 @@ screenBtn.onclick = async () => {
         channelCount: 2,
         sampleRate: 48000,
         sampleSize: 16,
-        echoCancellation: false,
+        echoCancellation: true,
         noiseSuppression: false,
         autoGainControl: false
       },
-      // System Audio bevorzugen (nicht Tab-Audio)
-      systemAudio: "include",
       selfBrowserSurface: "exclude",
       surfaceSwitching: "include"
     });
 
-    // Video Container für lokale Vorschau erstellen
+    // Video Container für lokale Vorschau erstellen (immer gemutet - eigene Vorschau)
     const container = createVideoContainer(screenStream, `${username}'s Screen (Vorschau)`, true);
+
+    // Server informieren dass Screen Share gestartet wurde
+    socket.emit("screen-share-started", { id: socket.id });
 
     // Alle Tracks hinzufügen mit optimierten Encoding-Parametern
     screenStream.getTracks().forEach(track => {
@@ -631,15 +721,29 @@ socket.on("signal", async (data) => {
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true
+          autoGainControl: true,
+          sampleRate: 48000,
+          sampleSize: 16,
+          channelCount: 2
         }
       });
-      localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+      localStream.getTracks().forEach(track => {
+        const sender = peerConnection.addTrack(track, localStream);
+        if (track.kind === 'audio') {
+          const params = sender.getParameters();
+          if (!params.encodings || params.encodings.length === 0) {
+            params.encodings = [{}];
+          }
+          params.encodings[0].maxBitrate = 510000;
+          sender.setParameters(params).catch(() => {});
+        }
+      });
       updateConnectionStatus(true);
       startStatsUpdate();
     }
 
     const answer = await peerConnection.createAnswer();
+    answer.sdp = optimizeAudioSDP(answer.sdp); // Apply SDP optimization
     await peerConnection.setLocalDescription(answer);
     socket.emit("signal", { answer });
   }
@@ -772,7 +876,6 @@ if (contextFullscreen) {
       document.exitFullscreen();
     } else {
       currentContextTarget.container.requestFullscreen();
-      currentContextTarget.video.muted = false;
       currentContextTarget.video.play().catch(() => {});
     }
     hideContextMenu();
