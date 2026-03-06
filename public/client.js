@@ -77,6 +77,7 @@ const joinBtn = document.getElementById("joinBtn");
 const muteBtn = document.getElementById("muteBtn");
 const screenBtn = document.getElementById("screenBtn");
 const statsBtn = document.getElementById("statsBtn");
+const queueBtn = document.getElementById("queueBtn");
 const leaveBtn = document.getElementById("leaveBtn");
 const stopScreenBtn = document.getElementById("stopScreenBtn");
 const statusDot = document.getElementById("statusDot");
@@ -615,6 +616,40 @@ function stopScreenShare() {
 // ---- Stats Button ----
 statsBtn.onclick = () => {
   statsOverlay.classList.toggle("visible");
+};
+
+// ---- Killer Queue Button ----
+queueBtn.onclick = async () => {
+  const originalTitle = queueBtn.title;
+  queueBtn.disabled = true;
+  queueBtn.title = "Lädt...";
+
+  try {
+    const response = await fetch("/api/killer-queue");
+    const raw = await response.text();
+    let data;
+
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      throw new Error("Server lieferte kein JSON (falscher Server/Port oder API nicht verfügbar)");
+    }
+
+    if (!response.ok || !data.killerQueue) {
+      throw new Error(data.error || "Queue nicht verfügbar");
+    }
+
+    const message = `🎯 Killer Queue: ${data.killerQueue}`;
+    addSystemMessage(message);
+    alert(message);
+  } catch (error) {
+    const message = `Killer Queue konnte nicht geladen werden: ${error.message}`;
+    addSystemMessage(message);
+    alert(message);
+  } finally {
+    queueBtn.disabled = false;
+    queueBtn.title = originalTitle;
+  }
 };
 
 // ---- Leave Button ----
