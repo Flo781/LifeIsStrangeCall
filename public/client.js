@@ -29,6 +29,15 @@ let userProfilePic = ""; // Profilbild URL
 let participants = new Map(); // userId -> {username, tile, audio, profilePic}
 let currentContextTarget = null; // Video/User container aktuell im Context Menu
 let userAudioElements = new Map(); // userId -> audio element
+let currentQuality = "medium"; // Stream Qualität: low, medium, high, ultra
+
+// Qualitäts-Presets
+const qualityPresets = {
+  low:    { width: 1280, height: 720,  fps: 30, bitrate: 2500000,  label: "SD" },
+  medium: { width: 1920, height: 1080, fps: 30, bitrate: 5000000,  label: "HD" },
+  high:   { width: 1920, height: 1080, fps: 60, bitrate: 8000000,  label: "FHD" },
+  ultra:  { width: 2560, height: 1440, fps: 60, bitrate: 12000000, label: "QHD" }
+};
 
 // Profilbild-Zuordnung
 const profilePictures = {
@@ -90,6 +99,12 @@ const statsOverlay = document.getElementById("statsOverlay");
 const chatMessages = document.getElementById("chatMessages");
 const chatInput = document.getElementById("chatInput");
 const chatSend = document.getElementById("chatSend");
+
+// Quality Selector Elemente
+const qualityBtn = document.getElementById("qualityBtn");
+const qualityDropdown = document.getElementById("qualityDropdown");
+const qualityBadge = document.getElementById("qualityBadge");
+const qualityOptions = document.querySelectorAll(".quality-option");
 
 // Username Modal
 const usernameModal = document.getElementById("usernameModal");
@@ -227,14 +242,24 @@ function createUserTile(userId, name, isLocal = false, profilePic = "") {
     audio.volume = 1;
     audio.dataset.userId = userId;
     document.body.appendChild(audio);
-    userAudioElements.set(userId, audio);
-    
-    // Rechtsklick Context Menu
-    tile.oncontextmenu = (e) => {
-      e.preventDefault();
-      showContextMenu(e.clientX, e.clientY, tile, audio);
-    };
-  }
+      
+      // Check ob bereits ein Fallback-Audio-Element vorhanden ist (ontrack kam vor createUserTile)
+      const pendingAudio = document.querySelector('audio[data-pending-audio="true"]');
+      if (pendingAudio && pendingAudio.srcObject) {
+        audio.srcObject = pendingAudio.srcObject;
+        audio.play().catch(e => console.warn("Audio play fehlgeschlagen:", e));
+        pendingAudio.remove();
+        console.log("Mikrofon-Audio von Fallback übernommen für User:", userId);
+      }
+      
+      userAudioElements.set(userId, audio);
+      
+      // Rechtsklick Context Menu
+      tile.oncontextmenu = (e) => {
+        e.preventDefault();
+        showContextMenu(e.clientX, e.clientY, tile, audio);
+      };
+    }
   
   // In participants Map speichern (mit profilePic)
   participants.set(userId, { username: name, tile, profilePic });
@@ -351,70 +376,89 @@ async function createPeerConnection() {
 
   // Renegotiation Handler für neue Tracks (z.B. Screen Share)
   peerConnection.onnegotiationneeded = async () => {
-    if (isNegotiating) return;
+    if (isNegotiating) {
+      console.log("onnegotiationneeded: übersprungen (isNegotiating=true)");
+      return;
+    }
+    if (peerConnection.signalingState !== "stable") {
+      console.log("onnegotiationneeded: übersprungen (state=" + peerConnection.signalingState + ")");
+      return;
+    }
     isNegotiating = true;
     try {
+      console.log("onnegotiationneeded: Erstelle Offer...");
       const offer = await peerConnection.createOffer();
-      offer.sdp = optimizeAudioSDP(offer.sdp); // Apply SDP optimization
+      offer.sdp = optimizeAudioSDP(offer.sdp);
       await peerConnection.setLocalDescription(offer);
       socket.emit("signal", { offer });
+      console.log("onnegotiationneeded: Offer gesendet ✓");
+    } catch (err) {
+      console.error("onnegotiationneeded Fehler:", err);
     } finally {
       isNegotiating = false;
     }
   };
 
-  // Connection State änderungen
+  // Signaling State Logging
   peerConnection.onsignalingstatechange = () => {
-    isNegotiating = peerConnection.signalingState !== "stable";
+    console.log("Signaling state:", peerConnection.signalingState);
   };
 
   // Eingehende Tracks abspielen
   peerConnection.ontrack = (event) => {
-    const stream = event.streams[0];
-    
-    // Prüfen ob Container schon existiert
-    const existing = videoGrid.querySelector(`[data-stream-id="${stream.id}"]`);
-    if (existing) return;
-    
-    const hasVideo = stream.getVideoTracks().length > 0;
-    const hasAudio = stream.getAudioTracks().length > 0;
-    
-    if (hasVideo) {
-      // Screen Share: Video-Element IMMER muten um Echo zu verhindern
-      // System-Audio enthält den Call-Audio → würde sich selbst hören
-      const container = createVideoContainer(stream, "Remote Screen", false);
-      const video = container.querySelector("video");
-      video.muted = true; // Echo verhindern!
-      
-      // Screen-Share-Audio separat abspielen (nur wenn Audio vorhanden)
-      if (hasAudio) {
-        // Neuen Audio-only Stream erstellen nur mit Audio-Tracks
-        const audioOnlyStream = new MediaStream(stream.getAudioTracks());
-        const screenAudio = document.createElement("audio");
-        screenAudio.srcObject = audioOnlyStream;
-        screenAudio.autoplay = true;
-        screenAudio.volume = 1;
-        screenAudio.dataset.streamId = stream.id;
-        document.body.appendChild(screenAudio);
-      }
+    let stream = event.streams[0];
+    if (!stream) {
+      // Kein Stream zugeordnet — manuell aus Track erstellen
+      console.warn("ontrack: Kein Stream zugeordnet, erstelle manuell für:", event.track.kind);
+      stream = new MediaStream([event.track]);
     }
     
-    // Audio-Stream dem ersten Remote User zuweisen (Mikrofon-Audio, kein Screen)
-    if (hasAudio && !hasVideo) {
-      // Audio zu vorhandenem User-Tile zuweisen
-      userAudioElements.forEach((audio, oderId) => {
-        if (!audio.srcObject) {
-          audio.srcObject = stream;
-          console.log("Audio assigned to user:", oderId);
-        }
-      });
+    console.log("ontrack:", event.track.kind, "streamId:", stream.id,
+      "video:", stream.getVideoTracks().length, "audio:", stream.getAudioTracks().length);
+    
+    const existing = videoGrid.querySelector(`[data-stream-id="${stream.id}"]`);
+    const hasVideo = stream.getVideoTracks().length > 0;
+    
+    if (hasVideo) {
+      // Video-Container erstellen falls noch nicht vorhanden
+      if (!existing) {
+        const container = createVideoContainer(stream, "Remote Screen", false);
+        const video = container.querySelector("video");
+        // Video NICHT muten — Audio soll direkt über das Video-Element spielen
+        video.muted = false;
+        video.volume = 1;
+        video.play().catch(e => console.warn("Video autoplay blockiert:", e));
+        console.log("Screen Share Container erstellt ✓ (audio unmuted)");
+      }
+    } else if (event.track.kind === 'audio') {
+      // Audio-only Stream → Mikrofon-Audio abspielen
+      let assigned = false;
+      for (const [id, audio] of userAudioElements) {
+        audio.srcObject = stream;
+        audio.play().catch(e => console.warn("Audio play fehlgeschlagen:", e));
+        assigned = true;
+        console.log("Mikrofon-Audio zugewiesen an User:", id);
+        break; // Nur einem User zuweisen
+      }
+      
+      // Falls noch kein User-Tile vorhanden: Fallback Audio-Element erstellen
+      if (!assigned) {
+        const fallbackAudio = document.createElement("audio");
+        fallbackAudio.srcObject = stream;
+        fallbackAudio.autoplay = true;
+        fallbackAudio.volume = 1;
+        fallbackAudio.dataset.pendingAudio = "true";
+        fallbackAudio.dataset.streamId = stream.id;
+        document.body.appendChild(fallbackAudio);
+        fallbackAudio.play().catch(e => console.warn("Fallback audio play fehlgeschlagen:", e));
+        console.log("Mikrofon-Audio: Fallback erstellt und spielt ✓");
+      }
     }
     
     // Track Ende behandeln
     stream.onremovetrack = () => {
       if (stream.getTracks().length === 0) {
         removeVideoContainer(stream.id);
-        // Auch separates Screen-Audio entfernen
         const screenAudio = document.querySelector(`audio[data-stream-id="${stream.id}"]`);
         if (screenAudio) screenAudio.remove();
       }
@@ -515,6 +559,55 @@ muteBtn.onclick = () => {
     : '<path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/>';
 };
 
+// ---- Quality Selector ----
+qualityBtn.onclick = (e) => {
+  e.stopPropagation();
+  qualityDropdown.classList.toggle("visible");
+};
+
+// Dropdown schließen bei Klick außerhalb
+document.addEventListener("click", (e) => {
+  if (!qualityBtn.contains(e.target) && !qualityDropdown.contains(e.target)) {
+    qualityDropdown.classList.remove("visible");
+  }
+});
+
+qualityOptions.forEach(option => {
+  option.onclick = () => {
+    currentQuality = option.dataset.quality;
+    const preset = qualityPresets[currentQuality];
+    
+    // UI aktualisieren
+    qualityOptions.forEach(o => o.classList.remove("selected"));
+    option.classList.add("selected");
+    qualityBadge.textContent = preset.label;
+    qualityDropdown.classList.remove("visible");
+    
+    // Wenn gerade gestreamt wird: Encoding live anpassen
+    if (screenStream && peerConnection) {
+      peerConnection.getSenders().forEach(sender => {
+        if (sender.track && sender.track.kind === 'video' && screenStream.getVideoTracks().includes(sender.track)) {
+          const params = sender.getParameters();
+          if (!params.encodings) params.encodings = [{}];
+          params.encodings[0].maxBitrate = preset.bitrate;
+          params.encodings[0].maxFramerate = preset.fps;
+          sender.setParameters(params).catch(e =>
+            console.warn("Qualität konnte nicht live geändert werden:", e)
+          );
+          
+          // Video-Track Constraints anpassen
+          sender.track.applyConstraints({
+            width: { ideal: preset.width, max: preset.width },
+            height: { ideal: preset.height, max: preset.height },
+            frameRate: { ideal: preset.fps, max: preset.fps }
+          }).catch(e => console.warn("Track-Constraints konnten nicht angepasst werden:", e));
+        }
+      });
+      console.log(`Stream Qualität auf ${preset.label} geändert (${preset.width}x${preset.height} @ ${preset.fps}fps)`);
+    }
+  };
+});
+
 // ---- Screen Share Button ----
 screenBtn.onclick = async () => {
   if (!peerConnection) {
@@ -523,26 +616,43 @@ screenBtn.onclick = async () => {
   }
 
   try {
-    // Bildschirm + Audio holen mit hoher FPS
-    // selfBrowserSurface: "exclude" verhindert dass der eigene Tab geteilt wird
-    // systemAudio: "exclude" verhindert Echo (System-Audio enthält Call-Audio!)
-    screenStream = await navigator.mediaDevices.getDisplayMedia({ 
-      video: {
-        frameRate: { ideal: 60, max: 60 },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
-      }, 
-      audio: {
-        channelCount: 2,
-        sampleRate: 48000,
-        sampleSize: 16,
-        echoCancellation: true,
-        noiseSuppression: false,
-        autoGainControl: false
-      },
-      selfBrowserSurface: "exclude",
-      surfaceSwitching: "include"
-    });
+    const preset = qualityPresets[currentQuality];
+    const videoConstraints = {
+      frameRate: { ideal: preset.fps, max: preset.fps },
+      width: { ideal: preset.width, max: preset.width },
+      height: { ideal: preset.height, max: preset.height }
+    };
+    const audioConstraints = true;
+
+    // Erst mit Audio versuchen, bei NotReadableError ohne Audio wiederholen
+    try {
+      screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: videoConstraints,
+        audio: audioConstraints,
+        selfBrowserSurface: "exclude",
+        surfaceSwitching: "include"
+      });
+    } catch (err) {
+      if (err.name === "NotReadableError" || err.name === "NotFoundError") {
+        console.warn("System-Audio nicht verfügbar:", err.message, "→ starte ohne Audio");
+        screenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: videoConstraints,
+          audio: false,
+          selfBrowserSurface: "exclude",
+          surfaceSwitching: "include"
+        });
+      } else {
+        throw err;
+      }
+    }
+
+    // Audio-Encoding optimieren falls Audio-Tracks vorhanden
+    const screenAudioTracks = screenStream.getAudioTracks();
+    if (screenAudioTracks.length > 0) {
+      console.log("Screen Share: System-Audio verfügbar ✓");
+    } else {
+      console.log("Screen Share: Kein System-Audio (nur Video)");
+    }
 
     // Video Container für lokale Vorschau erstellen (immer gemutet - eigene Vorschau)
     const container = createVideoContainer(screenStream, `${username}'s Screen (Vorschau)`, true);
@@ -550,32 +660,84 @@ screenBtn.onclick = async () => {
     // Server informieren dass Screen Share gestartet wurde
     socket.emit("screen-share-started", { id: socket.id });
 
-    // Alle Tracks hinzufügen mit optimierten Encoding-Parametern
-    screenStream.getTracks().forEach(track => {
-      const sender = peerConnection.addTrack(track, screenStream);
+    // onnegotiationneeded blockieren — wir machen die Renegotiation explizit
+    isNegotiating = true;
+    try {
+      console.log("Screen Share: Füge Tracks hinzu...");
+
+      // Alle Tracks hinzufügen
+      screenStream.getTracks().forEach(track => {
+        const sender = peerConnection.addTrack(track, screenStream);
+        
+        if (track.kind === 'video') {
+          try { track.contentHint = 'detail'; } catch(e) {}
+          
+          // VP8 bevorzugen → Software-Encoding, vermeidet NVIDIA NVENC Probleme
+          try {
+            const transceiver = peerConnection.getTransceivers().find(t => t.sender === sender);
+            if (transceiver && typeof transceiver.setCodecPreferences === 'function') {
+              const capabilities = RTCRtpReceiver.getCapabilities('video');
+              if (capabilities && capabilities.codecs) {
+                const vp8 = capabilities.codecs.filter(c => c.mimeType.toLowerCase() === 'video/vp8');
+                const rest = capabilities.codecs.filter(c => c.mimeType.toLowerCase() !== 'video/vp8');
+                if (vp8.length > 0) {
+                  transceiver.setCodecPreferences([...vp8, ...rest]);
+                  console.log('Screen Share: VP8 Codec bevorzugt');
+                }
+              }
+            }
+          } catch (codecErr) {
+            console.warn('Codec-Präferenzen konnten nicht gesetzt werden:', codecErr);
+          }
+          
+          const params = sender.getParameters();
+          if (!params.encodings) params.encodings = [{}];
+          params.encodings[0].maxBitrate = preset.bitrate;
+          params.encodings[0].maxFramerate = preset.fps;
+          sender.setParameters(params).catch(e => 
+            console.warn("Video-Encoding fehlgeschlagen, nutze Defaults:", e)
+          );
+        }
+        
+        if (track.kind === 'audio') {
+          const params = sender.getParameters();
+          if (!params.encodings) params.encodings = [{}];
+          params.encodings[0].maxBitrate = 320000;
+          sender.setParameters(params).catch(e => 
+            console.warn("Audio-Encoding fehlgeschlagen, nutze Defaults:", e)
+          );
+        }
+        
+        track.onended = () => {
+          try { peerConnection.removeTrack(sender); } catch(e) {}
+          stopScreenShare();
+        };
+      });
       
-      // Video Encoding optimieren
-      if (track.kind === 'video') {
-        const params = sender.getParameters();
-        if (!params.encodings) params.encodings = [{}];
-        params.encodings[0].maxBitrate = 8000000;
-        params.encodings[0].maxFramerate = 60;
-        sender.setParameters(params);
+      // EXPLIZIT Renegotiation-Offer senden (nicht auf onnegotiationneeded verlassen!)
+      console.log("Screen Share: Erstelle Renegotiation Offer...");
+      const offer = await peerConnection.createOffer();
+      offer.sdp = optimizeAudioSDP(offer.sdp);
+      await peerConnection.setLocalDescription(offer);
+      socket.emit("signal", { offer });
+      console.log("Screen Share: Renegotiation Offer gesendet ✓");
+    } catch (reErr) {
+      console.error("Screen Share: Renegotiation fehlgeschlagen:", reErr);
+    } finally {
+      isNegotiating = false;
+    }
+    
+    // Track Health-Check nach 2 Sekunden
+    setTimeout(() => {
+      if (screenStream) {
+        const videoTrack = screenStream.getVideoTracks()[0];
+        if (videoTrack && videoTrack.readyState === 'ended') {
+          console.error('Screen Share: Video Track gestorben (GPU-Encoder?)');
+          alert('Screen Share fehlgeschlagen — GPU-Treiber Problem.\n\n1. Chrome neustarten\n2. chrome://flags → "Hardware-accelerated video encode" → Disabled\n3. GPU-Treiber neu installieren');
+          stopScreenShare();
+        }
       }
-      
-      // Audio Encoding optimieren
-      if (track.kind === 'audio') {
-        const params = sender.getParameters();
-        if (!params.encodings) params.encodings = [{}];
-        params.encodings[0].maxBitrate = 320000;
-        sender.setParameters(params);
-      }
-      
-      track.onended = () => {
-        peerConnection.removeTrack(sender);
-        stopScreenShare();
-      };
-    });
+    }, 2000);
     
     screenBtn.classList.add("active");
     screenBtn.style.display = "none";
@@ -700,6 +862,7 @@ function cleanup() {
   updateConnectionStatus(false);
   videoGrid.querySelectorAll(".video-container").forEach(el => el.remove());
   document.querySelectorAll("audio[data-stream-id]").forEach(el => el.remove());
+  document.querySelectorAll('audio[data-pending-audio]').forEach(el => el.remove());
   screenBtn.classList.remove("active");
   screenBtn.style.display = "flex";
   stopScreenBtn.style.display = "none";
@@ -744,51 +907,71 @@ function startStatsUpdate() {
 
 // ---- Signaling Handler ----
 socket.on("signal", async (data) => {
-  if (data.offer) {
-    // PeerConnection erstellen falls noch nicht vorhanden
-    await createPeerConnection();
-    
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+  try {
+    if (data.offer) {
+      // PeerConnection erstellen falls noch nicht vorhanden
+      await createPeerConnection();
+      
+      // Glare-Handling: Wenn wir bereits ein Offer gesendet haben (have-local-offer),
+      // müssen wir erst zurückrollen bevor wir das Remote-Offer annehmen
+      if (peerConnection.signalingState === 'have-local-offer') {
+        console.log('Glare detected: Rolling back local offer');
+        await peerConnection.setLocalDescription({ type: 'rollback' });
+      }
 
-    // eigenes Mikrofon hinzufügen, falls noch nicht vorhanden
-    if (!localStream) {
-      localStream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 48000,
-          sampleSize: 16,
-          channelCount: 2
-        }
-      });
-      localStream.getTracks().forEach(track => {
-        const sender = peerConnection.addTrack(track, localStream);
-        if (track.kind === 'audio') {
-          const params = sender.getParameters();
-          if (!params.encodings || params.encodings.length === 0) {
-            params.encodings = [{}];
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+
+      // eigenes Mikrofon hinzufügen, falls noch nicht vorhanden
+      if (!localStream) {
+        localStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 48000,
+            sampleSize: 16,
+            channelCount: 2
           }
-          params.encodings[0].maxBitrate = 510000;
-          sender.setParameters(params).catch(() => {});
-        }
-      });
-      updateConnectionStatus(true);
-      startStatsUpdate();
+        });
+        localStream.getTracks().forEach(track => {
+          const sender = peerConnection.addTrack(track, localStream);
+          if (track.kind === 'audio') {
+            const params = sender.getParameters();
+            if (!params.encodings || params.encodings.length === 0) {
+              params.encodings = [{}];
+            }
+            params.encodings[0].maxBitrate = 510000;
+            sender.setParameters(params).catch(() => {});
+          }
+        });
+        updateConnectionStatus(true);
+        startStatsUpdate();
+      }
+
+      const answer = await peerConnection.createAnswer();
+      answer.sdp = optimizeAudioSDP(answer.sdp); // Apply SDP optimization
+      await peerConnection.setLocalDescription(answer);
+      socket.emit("signal", { answer });
     }
 
-    const answer = await peerConnection.createAnswer();
-    answer.sdp = optimizeAudioSDP(answer.sdp); // Apply SDP optimization
-    await peerConnection.setLocalDescription(answer);
-    socket.emit("signal", { answer });
-  }
+    if (data.answer && peerConnection) {
+      // Nur setzen wenn wir tatsächlich auf eine Antwort warten
+      if (peerConnection.signalingState === 'have-local-offer') {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+      } else {
+        console.warn('Answer ignoriert — signalingState ist:', peerConnection.signalingState);
+      }
+    }
 
-  if (data.answer && peerConnection) {
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-  }
-
-  if (data.candidate && peerConnection) {
-    await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+    if (data.candidate && peerConnection) {
+      try {
+        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+      } catch (iceErr) {
+        console.warn('ICE candidate konnte nicht hinzugefügt werden:', iceErr);
+      }
+    }
+  } catch (err) {
+    console.error('Signaling Fehler:', err);
   }
 });
 
