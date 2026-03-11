@@ -22,8 +22,10 @@ function isBlackHoleInstalled() {
 
 function installPkg(pkgPath) {
   return new Promise((resolve, reject) => {
-    const script = `do shell script "installer -pkg '${pkgPath}' -target /" with administrator privileges`;
-    exec(`osascript -e '${script}'`, (err, stdout, stderr) => {
+    // Pfad für AppleScript korrekt escapen (einfache Anführungszeichen müssen escaped werden)
+    const escapedPath = pkgPath.replace(/'/g, "'\\''");
+    const script = `do shell script "installer -pkg '${escapedPath}' -target /" with administrator privileges`;
+    exec(`osascript -e ${JSON.stringify(script)}`, (err, stdout, stderr) => {
       if (err) reject(new Error(stderr || err.message));
       else resolve();
     });
