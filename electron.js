@@ -101,16 +101,14 @@ async function installBlackHoleIfNeeded() {
 
     if (!progressWin.isDestroyed()) progressWin.close();
 
+    // Kein Neustart nötig! Einfach Erfolgsmeldung anzeigen
     await dialog.showMessageBox(mainWindow, {
       type: "info",
       title: "✅ Installation erfolgreich!",
       message: "BlackHole wurde erfolgreich installiert!",
-      detail: "System-Audio beim Bildschirm teilen ist jetzt verfügbar.\nDie App wird jetzt neu gestartet.",
-      buttons: ["App neu starten"],
+      detail: "System-Audio beim Bildschirm teilen ist jetzt verfügbar.\nDu kannst sofort loslegen!",
+      buttons: ["OK"],
     });
-
-    app.relaunch();
-    app.quit();
 
   } catch (err) {
     console.error("BlackHole Installation fehlgeschlagen:", err);
@@ -157,7 +155,9 @@ function createWindow() {
       thumbnailSize: { width: 320, height: 180 },
       fetchWindowIcons: true,
     }).then((sources) => {
-      openPickerWindow(sources, callback);
+      // BlackHole direkt über system_profiler prüfen (funktioniert auch ohne Neustart)
+      const blackHoleInstalled = isBlackHoleInstalled();
+      openPickerWindow(sources, callback, blackHoleInstalled);
     }).catch(err => {
       console.error("desktopCapturer Fehler:", err);
       callback({});
@@ -186,7 +186,7 @@ function createWindow() {
 
 // ---- Screen Share Picker ----
 
-function openPickerWindow(sources, callback) {
+function openPickerWindow(sources, callback, blackHoleInstalled) {
   if (pickerWindow && !pickerWindow.isDestroyed()) pickerWindow.destroy();
 
   const isMac = process.platform === "darwin";
@@ -219,7 +219,7 @@ function openPickerWindow(sources, callback) {
   const macAudioHint = isMac ? `
     <div id="macAudioHint" style="margin-top:12px;padding:10px 14px;background:#16213e;
       border-left:3px solid #c89b7b;border-radius:6px;font-size:12px;color:#bbb;line-height:1.6;">
-      <span id="audioHintText">🔍 Prüfe BlackHole...</span>
+      <span id="audioHintText">${blackHoleInstalled ? '✅ BlackHole erkannt — System-Audio wird übertragen!' : '⚠️ BlackHole nicht erkannt. Starte die App neu falls du es gerade installiert hast.'}</span>
     </div>` : "";
 
   const pickerHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
@@ -252,7 +252,7 @@ function openPickerWindow(sources, callback) {
   <div class="section-title">Fenster / Anwendungen</div>
   <div class="grid" id="windowGrid"></div>
   <div class="audio-row">
-    <input type="checkbox" id="audioCheck" checked>
+    <input type="checkbox" id="audioCheck" ${blackHoleInstalled ? 'checked' : 'disabled'}>
     <label for="audioCheck">System-Audio mitübertragen</label>
   </div>
   ${macAudioHint}
