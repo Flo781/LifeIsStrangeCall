@@ -2,9 +2,16 @@ const express = require("express");
 const https = require("https");
 const http = require("http");
 const fs = require("fs");
+const path = require("path");
 const { Server } = require("socket.io");
 
 const app = express();
+
+// Pfad zum App-Verzeichnis — funktioniert sowohl im Dev-Modus als auch im gebauten Bundle
+const isPackaged = process.resourcesPath && !process.resourcesPath.includes("node_modules");
+const appRoot = isPackaged
+  ? path.join(process.resourcesPath, "app")
+  : __dirname;
 
 const regionInfo = {
   "North America": {
@@ -71,8 +78,8 @@ function getRegionName(regionCode) {
 // HTTPS Setup (für Entwicklung - selbstsigniertes Zertifikat)
 let server;
 try {
-  const key = fs.readFileSync("./private-key.pem");
-  const cert = fs.readFileSync("./certificate.pem");
+  const key = fs.readFileSync(path.join(appRoot, "private-key.pem"));
+  const cert = fs.readFileSync(path.join(appRoot, "certificate.pem"));
   server = https.createServer({ key, cert }, app);
   console.log("✓ HTTPS aktiviert");
 } catch (err) {
@@ -92,8 +99,9 @@ const io = new Server(server, {
   pingTimeout: 60000
 });
 
-app.use(express.static("public"));
-app.use("/assets", express.static("assets"));
+// Statische Dateien — Pfad relativ zum App-Root
+app.use(express.static(path.join(appRoot, "public")));
+app.use("/assets", express.static(path.join(appRoot, "assets")));
 
 app.get("/api/killer-queue", async (req, res) => {
   try {
