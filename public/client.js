@@ -1,5 +1,8 @@
 // client.js
-const socket = io();
+const SERVER_URL = "https://lifeisstrange-production.up.railway.app";
+const socket = io(SERVER_URL, {
+  transports: ["websocket", "polling"]
+});
 
 socket.on("connect", () => {
   console.log("✓ Socket.IO verbunden:", socket.id);
@@ -174,9 +177,49 @@ socket.on("chat-message", (msg) => {
   addChatMessage(msg);
 });
 
+// ---- Sound Effekte ----
+function playJoinSound() {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const now = ctx.currentTime;
+
+  // Zwei aufsteigende Töne (Pling!)
+  [440, 660].forEach((freq, i) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, now + i * 0.15);
+    gain.gain.setValueAtTime(0.25, now + i * 0.15);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.15 + 0.4);
+    osc.start(now + i * 0.15);
+    osc.stop(now + i * 0.15 + 0.4);
+  });
+}
+
+function playLeaveSound() {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const now = ctx.currentTime;
+
+  // Zwei absteigende Töne (Ploing!)
+  [660, 440].forEach((freq, i) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, now + i * 0.15);
+    gain.gain.setValueAtTime(0.25, now + i * 0.15);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.15 + 0.4);
+    osc.start(now + i * 0.15);
+    osc.stop(now + i * 0.15 + 0.4);
+  });
+}
+
 socket.on("user-joined", (data) => {
   // Nur verarbeiten wenn wir im Call sind
   if (data.id !== socket.id && peerConnection) {
+    playJoinSound();
     addSystemMessage(`${data.username} ist beigetreten`);
     // User Tile erstellen für neuen User mit Profilbild
     createUserTile(data.id, data.username, false, data.profilePic);
@@ -186,6 +229,7 @@ socket.on("user-joined", (data) => {
 socket.on("user-left", (data) => {
   // Nur verarbeiten wenn wir im Call sind und es nicht wir selbst sind
   if (data.id !== socket.id && peerConnection) {
+    playLeaveSound();
     addSystemMessage(`${data.username} hat den Call verlassen`);
     // User Tile entfernen
     removeUserTile(data.id);
@@ -622,57 +666,89 @@ screenBtn.onclick = async () => {
       width: { ideal: preset.width, max: preset.width },
       height: { ideal: preset.height, max: preset.height }
     };
-    const audioConstraints = true;
 
-    // Erst mit Audio versuchen, bei NotReadableError ohne Audio wiederholen
+    let audioFallbackUsed = false;
+
+    // Versuch 1: Mit System-Audio (funktioniert in Electron auf Windows via loopback)
     try {
       screenStream = await navigator.mediaDevices.getDisplayMedia({
         video: videoConstraints,
-        audio: audioConstraints,
+        audio: true,
         selfBrowserSurface: "exclude",
         surfaceSwitching: "include"
       });
+      console.log("Screen Share: Audio erfolgreich ✓");
     } catch (err) {
-      if (err.name === "NotReadableError" || err.name === "NotFoundError") {
-        console.warn("System-Audio nicht verfügbar:", err.message, "→ starte ohne Audio");
+      if (err.name === "NotReadableError" || err.name === "NotFoundError" || err.name === "AbortError") {
+        console.warn("Screen Share: System-Audio fehlgeschlagen (" + err.name + ") → Versuche Fallback");
         screenStream = await navigator.mediaDevices.getDisplayMedia({
           video: videoConstraints,
           audio: false,
           selfBrowserSurface: "exclude",
           surfaceSwitching: "include"
         });
+        audioFallbackUsed = true;
       } else {
         throw err;
       }
     }
 
-    // Audio-Encoding optimieren falls Audio-Tracks vorhanden
-    const screenAudioTracks = screenStream.getAudioTracks();
-    if (screenAudioTracks.length > 0) {
-      console.log("Screen Share: System-Audio verfügbar ✓");
-    } else {
-      console.log("Screen Share: Kein System-Audio (nur Video)");
+    // macOS + BlackHole: Audio separat per getUserMedia holen und zum Stream hinzufügen
+    const blackHoleId = window._blackHoleDeviceId;
+    if (blackHoleId) {
+      try {
+        const bhStream = await navigator.mediaDevices.getUserMedia({
+          audio: { deviceId: { exact: blackHoleId }, channelCount: 2, sampleRate: 48000 }
+        });
+        bhStream.getAudioTracks().forEach(track => {
+          screenStream.addTrack(track);
+          screenStream.getVideoTracks()[0]?.addEventListener("ended", () => track.stop());
+        });
+        window._blackHoleDeviceId = null; // einmal benutzt → zurücksetzen
+        audioFallbackUsed = false;
+        console.log("Screen Share: BlackHole Audio hinzugefügt ✓");
+        addSystemMessage("✅ BlackHole System-Audio aktiv");
+      } catch (bhErr) {
+        console.warn("BlackHole Audio fehlgeschlagen:", bhErr.message);
+        audioFallbackUsed = true;
+      }
     }
 
-    // Video Container für lokale Vorschau erstellen (immer gemutet - eigene Vorschau)
-    const container = createVideoContainer(screenStream, `${username}'s Screen (Vorschau)`, true);
+    // Letzter Fallback: Mikrofon als Audio-Quelle
+    if (audioFallbackUsed && screenStream.getAudioTracks().length === 0) {
+      try {
+        const micFallback = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000, channelCount: 2 }
+        });
+        micFallback.getAudioTracks().forEach(track => {
+          screenStream.addTrack(track);
+          screenStream.getVideoTracks()[0]?.addEventListener("ended", () => track.stop());
+        });
+        addSystemMessage("⚠️ System-Audio nicht verfügbar — Mikrofon wird als Ton-Quelle genutzt");
+        console.log("Screen Share: Mikrofon-Fallback aktiv ✓");
+      } catch (micErr) {
+        addSystemMessage("⚠️ Kein Ton beim Screen Share möglich");
+        console.warn("Screen Share: Kein Audio verfügbar:", micErr.message);
+      }
+    }
 
-    // Server informieren dass Screen Share gestartet wurde
+    console.log("Screen Share Audio Tracks:", screenStream.getAudioTracks().length);
+
+    // Video Container für lokale Vorschau erstellen
+    createVideoContainer(screenStream, `${username}'s Screen (Vorschau)`, true);
+
     socket.emit("screen-share-started", { id: socket.id });
 
-    // onnegotiationneeded blockieren — wir machen die Renegotiation explizit
     isNegotiating = true;
     try {
       console.log("Screen Share: Füge Tracks hinzu...");
 
-      // Alle Tracks hinzufügen
       screenStream.getTracks().forEach(track => {
         const sender = peerConnection.addTrack(track, screenStream);
-        
+
         if (track.kind === 'video') {
           try { track.contentHint = 'detail'; } catch(e) {}
-          
-          // VP8 bevorzugen → Software-Encoding, vermeidet NVIDIA NVENC Probleme
+
           try {
             const transceiver = peerConnection.getTransceivers().find(t => t.sender === sender);
             if (transceiver && typeof transceiver.setCodecPreferences === 'function') {
@@ -689,33 +765,31 @@ screenBtn.onclick = async () => {
           } catch (codecErr) {
             console.warn('Codec-Präferenzen konnten nicht gesetzt werden:', codecErr);
           }
-          
+
           const params = sender.getParameters();
           if (!params.encodings) params.encodings = [{}];
           params.encodings[0].maxBitrate = preset.bitrate;
           params.encodings[0].maxFramerate = preset.fps;
-          sender.setParameters(params).catch(e => 
-            console.warn("Video-Encoding fehlgeschlagen, nutze Defaults:", e)
+          sender.setParameters(params).catch(e =>
+            console.warn("Video-Encoding fehlgeschlagen:", e)
           );
         }
-        
+
         if (track.kind === 'audio') {
           const params = sender.getParameters();
           if (!params.encodings) params.encodings = [{}];
           params.encodings[0].maxBitrate = 320000;
-          sender.setParameters(params).catch(e => 
-            console.warn("Audio-Encoding fehlgeschlagen, nutze Defaults:", e)
+          sender.setParameters(params).catch(e =>
+            console.warn("Audio-Encoding fehlgeschlagen:", e)
           );
         }
-        
+
         track.onended = () => {
           try { peerConnection.removeTrack(sender); } catch(e) {}
-          stopScreenShare();
+          if (track.kind === 'video') stopScreenShare();
         };
       });
-      
-      // EXPLIZIT Renegotiation-Offer senden (nicht auf onnegotiationneeded verlassen!)
-      console.log("Screen Share: Erstelle Renegotiation Offer...");
+
       const offer = await peerConnection.createOffer();
       offer.sdp = optimizeAudioSDP(offer.sdp);
       await peerConnection.setLocalDescription(offer);
@@ -726,25 +800,26 @@ screenBtn.onclick = async () => {
     } finally {
       isNegotiating = false;
     }
-    
-    // Track Health-Check nach 2 Sekunden
+
     setTimeout(() => {
       if (screenStream) {
         const videoTrack = screenStream.getVideoTracks()[0];
         if (videoTrack && videoTrack.readyState === 'ended') {
-          console.error('Screen Share: Video Track gestorben (GPU-Encoder?)');
-          alert('Screen Share fehlgeschlagen — GPU-Treiber Problem.\n\n1. Chrome neustarten\n2. chrome://flags → "Hardware-accelerated video encode" → Disabled\n3. GPU-Treiber neu installieren');
+          console.error('Screen Share: Video Track gestorben');
           stopScreenShare();
         }
       }
     }, 2000);
-    
+
     screenBtn.classList.add("active");
     screenBtn.style.display = "none";
     stopScreenBtn.style.display = "flex";
-    
+
   } catch (err) {
     console.error("Screen Share Fehler:", err);
+    if (err.name !== "NotAllowedError") {
+      alert("Screen Share Fehler: " + err.name + "\n" + err.message);
+    }
   }
 };
 
