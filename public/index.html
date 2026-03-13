@@ -927,6 +927,57 @@
       font-weight: 600;
       color: #fff;
     }
+
+    /* Audio Device Modal */
+    .audio-device-modal {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1500;
+    }
+    .audio-device-modal.hidden { display: none; }
+    .audio-device-box {
+      background: #1a1a2e;
+      border: 1px solid #7d8d9e;
+      border-radius: 14px;
+      padding: 28px;
+      width: 380px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .audio-device-box h3 { color: #c89b7b; font-size: 16px; margin-bottom: 4px; }
+    .audio-device-group label {
+      display: block;
+      font-size: 11px;
+      text-transform: uppercase;
+      color: #888;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+    .audio-device-group select {
+      width: 100%;
+      background: #16213e;
+      border: 1px solid #7d8d9e;
+      border-radius: 8px;
+      color: #e0e0e0;
+      font-size: 13px;
+      padding: 8px 12px;
+      cursor: pointer;
+      outline: none;
+      font-family: inherit;
+    }
+    .audio-device-group select:focus { border-color: #c89b7b; }
+    .audio-device-btns { display: flex; justify-content: flex-end; gap: 10px; }
+    .audio-device-btns button {
+      padding: 8px 20px; border: none; border-radius: 8px;
+      font-size: 13px; cursor: pointer; font-family: inherit;
+    }
+    #audioDeviceCancel { background: #2a2a3e; color: #aaa; }
+    #audioDeviceApply { background: #c89b7b; color: #1a1a2e; font-weight: bold; }
   </style>
 </head>
 <body>
@@ -1014,6 +1065,9 @@
         <button class="control-btn danger" id="leaveBtn" title="Leave Call" disabled>
           <svg viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.68-1.36-2.66-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
         </button>
+        <button class="control-btn" id="audioDeviceBtn" title="Audio Gerät wählen">
+          <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0-9 9v7c0 1.1.9 2 2 2h1v-8H4v-1a8 8 0 0 1 16 0v1h-2v8h1c1.1 0 2-.9 2-2v-7a9 9 0 0 0-9-9z"/></svg>
+        </button>
       </div>
     </div>
 
@@ -1069,6 +1123,25 @@
     <div class="stat"><span>FPS:</span><span class="value" id="statFps">-</span></div>
     <div class="stat"><span>Bitrate:</span><span class="value" id="statBitrate">-</span></div>
     <div class="stat"><span>Latency:</span><span class="value" id="statLatency">-</span></div>
+  </div>
+
+  <!-- Audio Device Modal -->
+  <div class="audio-device-modal hidden" id="audioDeviceModal">
+    <div class="audio-device-box">
+      <h3>Audio-Geräte-Auswahl</h3>
+      <div class="audio-device-group">
+        <label for="inputDevice">Eingabegerät</label>
+        <select id="inputDevice"></select>
+      </div>
+      <div class="audio-device-group">
+        <label for="outputDevice">Ausgabegerät</label>
+        <select id="outputDevice"></select>
+      </div>
+      <div class="audio-device-btns">
+        <button id="audioDeviceCancel">Abbrechen</button>
+        <button id="audioDeviceApply">Anwenden</button>
+      </div>
+    </div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>

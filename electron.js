@@ -90,7 +90,10 @@ async function installBlackHoleIfNeeded() {
   `));
 
   // .pkg direkt aus dem App-Bundle — kein Internet nötig!
-  const bundledPkg = path.join(__dirname, "assets", "installers", "BlackHole2ch.pkg");
+  // Im Dev-Modus: assets/installers/, im gebauten Build: resources/installers/
+  const bundledPkg = app.isPackaged
+    ? path.join(process.resourcesPath, "installers", "BlackHole2ch.pkg")
+    : path.join(__dirname, "assets", "installers", "BlackHole2ch.pkg");
 
   try {
     if (!fs.existsSync(bundledPkg)) {
@@ -190,10 +193,11 @@ function openPickerWindow(sources, callback, blackHoleInstalled) {
   if (pickerWindow && !pickerWindow.isDestroyed()) pickerWindow.destroy();
 
   const isMac = process.platform === "darwin";
+  const isWin = process.platform === "win32";
 
   pickerWindow = new BrowserWindow({
     width: 800,
-    height: 580,
+    height: 620,
     title: "Bildschirm oder Fenster wählen",
     resizable: false,
     minimizable: false,
@@ -217,9 +221,15 @@ function openPickerWindow(sources, callback, blackHoleInstalled) {
   })));
 
   const macAudioHint = isMac ? `
-    <div id="macAudioHint" style="margin-top:12px;padding:10px 14px;background:#16213e;
+    <div id="macAudioHint" style="margin-top:8px;padding:10px 14px;background:#16213e;
       border-left:3px solid #c89b7b;border-radius:6px;font-size:12px;color:#bbb;line-height:1.6;">
       <span id="audioHintText">${blackHoleInstalled ? '✅ BlackHole erkannt — System-Audio wird übertragen!' : '⚠️ BlackHole nicht erkannt. Starte die App neu falls du es gerade installiert hast.'}</span>
+    </div>` : "";
+
+  const winAudioHint = isWin ? `
+    <div style="margin-top:8px;padding:10px 14px;background:#16213e;
+      border-left:3px solid #4caf50;border-radius:6px;font-size:12px;color:#bbb;line-height:1.6;">
+      ✅ Windows: System-Audio wird automatisch mitübertragen
     </div>` : "";
 
   const pickerHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
@@ -228,7 +238,7 @@ function openPickerWindow(sources, callback, blackHoleInstalled) {
     h2{font-size:16px;margin-bottom:6px;color:#c89b7b;}
     .subtitle{font-size:12px;color:#888;margin-bottom:14px;}
     .section-title{font-size:11px;text-transform:uppercase;color:#888;letter-spacing:1px;margin:14px 0 8px;}
-    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;max-height:260px;overflow-y:auto;padding-right:4px;}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;max-height:220px;overflow-y:auto;padding-right:4px;}
     .grid::-webkit-scrollbar{width:6px;} .grid::-webkit-scrollbar-track{background:#0d0d1a;}
     .grid::-webkit-scrollbar-thumb{background:#c89b7b55;border-radius:3px;}
     .source{background:#16213e;border:2px solid transparent;border-radius:10px;padding:8px;cursor:pointer;transition:all 0.15s;text-align:center;}
@@ -236,9 +246,9 @@ function openPickerWindow(sources, callback, blackHoleInstalled) {
     .source.selected{border-color:#c89b7b;background:#1e2d4d;}
     .source img{width:100%;height:90px;object-fit:cover;border-radius:6px;background:#0d0d1a;}
     .source .name{font-size:11px;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#ccc;}
-    .audio-row{margin-top:14px;display:flex;align-items:center;gap:10px;font-size:13px;color:#ccc;}
+    .audio-row{margin-top:12px;display:flex;align-items:center;gap:10px;font-size:13px;color:#ccc;}
     .audio-row input[type=checkbox]{width:16px;height:16px;accent-color:#c89b7b;cursor:pointer;}
-    .buttons{margin-top:16px;display:flex;justify-content:flex-end;gap:10px;}
+    .buttons{margin-top:14px;display:flex;justify-content:flex-end;gap:10px;}
     button{padding:8px 20px;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit;}
     #cancelBtn{background:#2a2a3e;color:#aaa;} #cancelBtn:hover{background:#333355;}
     #shareBtn{background:#c89b7b;color:#1a1a2e;font-weight:bold;} #shareBtn:hover{background:#d4aa8a;}
@@ -252,10 +262,11 @@ function openPickerWindow(sources, callback, blackHoleInstalled) {
   <div class="section-title">Fenster / Anwendungen</div>
   <div class="grid" id="windowGrid"></div>
   <div class="audio-row">
-    <input type="checkbox" id="audioCheck" ${blackHoleInstalled ? 'checked' : 'disabled'}>
+    <input type="checkbox" id="audioCheck" ${(isMac && blackHoleInstalled) ? 'checked' : (isWin ? 'checked' : 'disabled')}>
     <label for="audioCheck">System-Audio mitübertragen</label>
   </div>
   ${macAudioHint}
+  ${winAudioHint}
   <div class="buttons">
     <button id="cancelBtn">Abbrechen</button>
     <button id="shareBtn" disabled>Teilen</button>
@@ -264,6 +275,7 @@ function openPickerWindow(sources, callback, blackHoleInstalled) {
     const { ipcRenderer } = require('electron');
     const sources = ${sourcesJson};
     const isMac = ${isMac};
+    const isWin = ${isWin};
     let selectedId = null;
     let blackHoleDeviceId = null;
 
@@ -335,14 +347,18 @@ function openPickerWindow(sources, callback, blackHoleInstalled) {
   ipcMain.once("picker-selected", (event, { sourceId, withAudio, blackHoleDeviceId }) => {
     const source = sources.find(s => s.id === sourceId);
     if (source) {
+      // FIX: Kein "loopback" mehr — das wirft einen Fehler in neuem Electron!
+      // Windows: audio:true reicht, Electron handled das intern über getDisplayMedia
+      // macOS: BlackHole deviceId separat an client.js übergeben
       let audioMode = false;
-      if (withAudio && process.platform === "win32") {
-        audioMode = "loopback"; // Windows: umgeht NVIDIA-Bug
-      } else if (withAudio && process.platform === "darwin" && blackHoleDeviceId) {
-        // BlackHole deviceId an client.js weitergeben
-        mainWindow.webContents.executeJavaScript(
-          `window._blackHoleDeviceId = ${JSON.stringify(blackHoleDeviceId)};`
-        ).catch(() => {});
+      if (withAudio) {
+        if (process.platform === "win32") {
+          audioMode = true; // Windows: einfach true, kein "loopback"
+        } else if (process.platform === "darwin" && blackHoleDeviceId) {
+          mainWindow.webContents.executeJavaScript(
+            `window._blackHoleDeviceId = ${JSON.stringify(blackHoleDeviceId)};`
+          ).catch(() => {});
+        }
       }
       callback({ video: source, audio: audioMode });
     } else {
@@ -364,9 +380,28 @@ function openPickerWindow(sources, callback, blackHoleInstalled) {
   });
 }
 
+// ---- IPC: Audio-Geräte vom Renderer anfragen ----
+ipcMain.handle("get-audio-devices", async () => {
+  // Renderer kann das selbst — wir geben nur das Signal
+  return true;
+});
+
 // ---- App Start ----
 
+// macOS: App entsperrt sich beim ersten Start selbst
+function removeSelfQuarantine() {
+  if (process.platform !== "darwin") return;
+  try {
+    const appPath = app.getPath("exe").split(".app/")[0] + ".app";
+    execSync(`xattr -rd com.apple.quarantine "${appPath}" 2>/dev/null || true`);
+    console.log("Quarantine entfernt ✓");
+  } catch (e) {
+    // Kein Problem wenn es fehlschlägt
+  }
+}
+
 app.whenReady().then(() => {
+  removeSelfQuarantine();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

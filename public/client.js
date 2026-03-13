@@ -120,6 +120,135 @@ const contextVolumeSlider = document.getElementById("contextVolumeSlider");
 const contextVolumeLabel = document.getElementById("contextVolumeLabel");
 const contextFullscreen = document.getElementById("contextFullscreen");
 
+// ---- Audio Geräte Auswahl ----
+let selectedInputDeviceId = null;
+let selectedOutputDeviceId = null;
+
+const audioDeviceBtn = document.getElementById("audioDeviceBtn");
+const audioDeviceModal = document.getElementById("audioDeviceModal");
+const inputDeviceSelect = document.getElementById("inputDevice");
+const outputDeviceSelect = document.getElementById("outputDevice");
+const audioDeviceApply = document.getElementById("audioDeviceApply");
+const audioDeviceCancel = document.getElementById("audioDeviceCancel");
+
+audioDeviceBtn.onclick = async () => {
+  // Geräteliste aktualisieren
+  try {
+    // Erstmal kurz getUserMedia anfragen damit Labels sichtbar werden
+    await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {});
+    const devices = await navigator.mediaDevices.enumerateDevices();
+
+    inputDeviceSelect.innerHTML = "";
+    outputDeviceSelect.innerHTML = '<option value="">Standard</option>';
+
+    devices.forEach(device => {
+      const option = document.createElement("option");
+      option.value = device.deviceId;
+      option.textContent = device.label || `${device.kind} (${device.deviceId.slice(0, 8)})`;
+
+      if (device.kind === "audioinput") {
+        if (selectedInputDeviceId && device.deviceId === selectedInputDeviceId) {
+          option.selected = true;
+        }
+        inputDeviceSelect.appendChild(option);
+      } else if (device.kind === "audiooutput") {
+        if (selectedOutputDeviceId && device.deviceId === selectedOutputDeviceId) {
+          option.selected = true;
+        }
+        outputDeviceSelect.appendChild(option);
+      }
+    });
+
+    audioDeviceModal.classList.remove("hidden");
+  } catch (e) {
+    alert("Fehler beim Laden der Audio-Geräte: " + e.message);
+  }
+};
+
+audioDeviceCancel.onclick = () => {
+  audioDeviceModal.classList.add("hidden");
+};
+
+audioDeviceApply.onclick = async () => {
+  const newInputId = inputDeviceSelect.value;
+  const newOutputId = outputDeviceSelect.value;
+  audioDeviceModal.classList.add("hidden");
+
+  // --- Eingabegerät wechseln ---
+  if (newInputId && newInputId !== selectedInputDeviceId) {
+    selectedInputDeviceId = newInputId;
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId: { exact: newInputId },
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000,
+          channelCount: 2
+        }
+      });
+
+      const newTrack = newStream.getAudioTracks()[0];
+
+      // Alten Track stoppen und neuen in PeerConnection ersetzen
+      if (localStream) {
+        localStream.getAudioTracks().forEach(t => t.stop());
+        localStream = newStream;
+
+        if (peerConnection) {
+          const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === "audio");
+          if (sender) {
+            await sender.replaceTrack(newTrack);
+            console.log("Mikrofon live gewechselt ✓:", newTrack.label);
+          }
+        }
+      } else {
+        localStream = newStream;
+      }
+
+      addSystemMessage("🎤 Mikrofon geändert: " + newTrack.label);
+    } catch (e) {
+      alert("Eingabegerät konnte nicht gewechselt werden: " + e.message);
+    }
+  }
+
+  // --- Ausgabegerät wechseln ---
+  // setSinkId() wird von Electron/Chromium unterstützt
+  if (newOutputId !== undefined) {
+    selectedOutputDeviceId = newOutputId || null;
+
+    // Alle Audio-Elemente auf neues Ausgabegerät setzen
+    const allAudioElements = [
+      ...document.querySelectorAll("audio"),
+      ...document.querySelectorAll("video")
+    ];
+
+    for (const el of allAudioElements) {
+      if (typeof el.setSinkId === "function") {
+        try {
+          await el.setSinkId(newOutputId || "");
+          console.log("Ausgabegerät gesetzt:", el.tagName, newOutputId || "Standard");
+        } catch (e) {
+          console.warn("setSinkId fehlgeschlagen:", e.message);
+        }
+      }
+    }
+
+    if (newOutputId) {
+      const label = outputDeviceSelect.options[outputDeviceSelect.selectedIndex]?.text || newOutputId;
+      addSystemMessage("🔊 Ausgabe geändert: " + label);
+    } else {
+      addSystemMessage("🔊 Ausgabe auf Standard zurückgesetzt");
+    }
+  }
+};
+
+// Klick außerhalb schließt das Modal
+audioDeviceModal.addEventListener("click", (e) => {
+  if (e.target === audioDeviceModal) audioDeviceModal.classList.add("hidden");
+});
+
 // ---- Profile Selection ----
 profileOptions.forEach(option => {
   option.onclick = () => {
