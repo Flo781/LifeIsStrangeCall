@@ -7,11 +7,9 @@ const { Server } = require("socket.io");
 
 const app = express();
 
-// Pfad zum App-Verzeichnis — funktioniert sowohl im Dev-Modus als auch im gebauten Bundle
-const isPackaged = process.resourcesPath && !process.resourcesPath.includes("node_modules");
-const appRoot = isPackaged
-  ? path.join(process.resourcesPath, "app")
-  : __dirname;
+// Im gebauten Bundle liegt alles in app.asar → __dirname zeigt direkt darauf
+// Sowohl auf macOS als auch Windows korrekt
+const appRoot = __dirname;
 
 const regionInfo = {
   "North America": {
@@ -75,7 +73,7 @@ function getRegionName(regionCode) {
   return regionCode;
 }
 
-// HTTPS Setup (für Entwicklung - selbstsigniertes Zertifikat)
+// HTTPS Setup
 let server;
 try {
   const key = fs.readFileSync(path.join(appRoot, "private-key.pem"));
@@ -83,9 +81,8 @@ try {
   server = https.createServer({ key, cert }, app);
   console.log("✓ HTTPS aktiviert");
 } catch (err) {
-  // Fallback zu HTTP für lokale Tests
   server = http.createServer(app);
-  console.log("⚠ Nur HTTP verfügbar - getUserMedia könnte auf macOS/Safari fehlschlagen");
+  console.log("⚠ Nur HTTP verfügbar");
 }
 
 const io = new Server(server, {
@@ -99,7 +96,7 @@ const io = new Server(server, {
   pingTimeout: 60000
 });
 
-// Statische Dateien — Pfad relativ zum App-Root
+// Statische Dateien — __dirname zeigt im Bundle korrekt auf app.asar
 app.use(express.static(path.join(appRoot, "public")));
 app.use("/assets", express.static(path.join(appRoot, "assets")));
 
