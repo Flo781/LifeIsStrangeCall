@@ -1,16 +1,28 @@
 // client.js
 const SERVER_URL = "https://lifeisstrange-production.up.railway.app";
 const socket = io(SERVER_URL, {
-  transports: ["websocket", "polling"]
+  transports: ["websocket", "polling"],
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
 });
 
 socket.on("connect", () => {
   console.log("✓ Socket.IO verbunden:", socket.id);
+  // Auto-Rejoin wenn Verbindung wiederhergestellt wird
+  if (username && peerConnection) {
+    socket.emit("register", { username, profilePic: userProfilePic });
+    addSystemMessage("🔄 Verbindung wiederhergestellt");
+  }
 });
 
 socket.on("disconnect", (reason) => {
   console.log("✗ Socket.IO getrennt:", reason);
   updateConnectionStatus(false);
+  if (peerConnection) {
+    addSystemMessage("⚠️ Verbindung unterbrochen — versuche neu zu verbinden...");
+  }
 });
 
 socket.on("connect_error", (error) => {
@@ -31,8 +43,10 @@ let username = "";
 let userProfilePic = ""; // Profilbild URL
 let participants = new Map(); // userId -> {username, tile, audio, profilePic}
 let currentContextTarget = null; // Video/User container aktuell im Context Menu
-let userAudioElements = new Map(); // userId -> audio element
+let userAudioElements = new Map(); // userId -> audio element (Mikrofon)
+let remoteScreenStreams = new Map(); // streamId -> { container, audioEl }
 let currentQuality = "medium"; // Stream Qualität: low, medium, high, ultra
+let pendingAudioStreams = []; // Streams die ankamen bevor User-Tile existierte
 
 // Qualitäts-Presets
 const qualityPresets = {
@@ -416,23 +430,31 @@ function createUserTile(userId, name, isLocal = false, profilePic = "") {
     audio.dataset.userId = userId;
     document.body.appendChild(audio);
       
-      // Check ob bereits ein Fallback-Audio-Element vorhanden ist (ontrack kam vor createUserTile)
-      const pendingAudio = document.querySelector('audio[data-pending-audio="true"]');
-      if (pendingAudio && pendingAudio.srcObject) {
-        audio.srcObject = pendingAudio.srcObject;
-        audio.play().catch(e => console.warn("Audio play fehlgeschlagen:", e));
-        pendingAudio.remove();
-        console.log("Mikrofon-Audio von Fallback übernommen für User:", userId);
-      }
-      
-      userAudioElements.set(userId, audio);
-      
-      // Rechtsklick Context Menu
-      tile.oncontextmenu = (e) => {
-        e.preventDefault();
-        showContextMenu(e.clientX, e.clientY, tile, audio);
-      };
+    // Check ob bereits ein Fallback-Audio-Element vorhanden ist (ontrack kam vor createUserTile)
+    const pendingAudio = document.querySelector('audio[data-pending-audio="true"]');
+    if (pendingAudio && pendingAudio.srcObject) {
+      audio.srcObject = pendingAudio.srcObject;
+      audio.play().catch(e => console.warn("Audio play fehlgeschlagen:", e));
+      pendingAudio.remove();
+      console.log("Mikrofon-Audio von Fallback übernommen für User:", userId);
     }
+
+    // Pending Audio-Stream zuweisen falls schon angekommen
+    if (pendingAudioStreams.length > 0) {
+      const stream = pendingAudioStreams.shift();
+      audio.srcObject = stream;
+      audio.play().catch(e => console.warn("Pending audio play:", e));
+      console.log("Pending Audio → User:", userId);
+    }
+      
+    userAudioElements.set(userId, audio);
+      
+    // Rechtsklick Context Menu
+    tile.oncontextmenu = (e) => {
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, tile, audio);
+    };
+  }
   
   // In participants Map speichern (mit profilePic)
   participants.set(userId, { username: name, tile, profilePic });
@@ -541,9 +563,13 @@ async function createPeerConnection() {
     console.log("Connection state:", peerConnection.connectionState);
     if (peerConnection.connectionState === "connected") {
       updateConnectionStatus(true);
-    } else if (peerConnection.connectionState === "disconnected" || 
-               peerConnection.connectionState === "failed") {
-      updateConnectionStatus(false);
+      addSystemMessage("✅ Verbunden!");
+    } else if (peerConnection.connectionState === "disconnected") {
+      addSystemMessage("⚠️ Verbindung kurz unterbrochen...");
+    } else if (peerConnection.connectionState === "failed") {
+      addSystemMessage("❌ Verbindung fehlgeschlagen — versuche neu...");
+      // ICE Restart versuchen
+      tryIceRestart();
     }
   };
 
@@ -577,66 +603,109 @@ async function createPeerConnection() {
     console.log("Signaling state:", peerConnection.signalingState);
   };
 
-  // Eingehende Tracks abspielen
+  // ---- ontrack: Kern-Fix für Screen Share + Audio ----
   peerConnection.ontrack = (event) => {
-    let stream = event.streams[0];
-    if (!stream) {
-      // Kein Stream zugeordnet — manuell aus Track erstellen
-      console.warn("ontrack: Kein Stream zugeordnet, erstelle manuell für:", event.track.kind);
-      stream = new MediaStream([event.track]);
-    }
-    
-    console.log("ontrack:", event.track.kind, "streamId:", stream.id,
-      "video:", stream.getVideoTracks().length, "audio:", stream.getAudioTracks().length);
-    
-    const existing = videoGrid.querySelector(`[data-stream-id="${stream.id}"]`);
-    const hasVideo = stream.getVideoTracks().length > 0;
-    
-    if (hasVideo) {
-      // Video-Container erstellen falls noch nicht vorhanden
-      if (!existing) {
-        const container = createVideoContainer(stream, "Remote Screen", false);
+    const track = event.track;
+    // streams[0] kann fehlen → manuell erstellen
+    const stream = event.streams[0] || new MediaStream([track]);
+
+    console.log(`ontrack: kind=${track.kind} streamId=${stream.id} streams=${event.streams.length}`);
+
+    if (track.kind === "video") {
+      // ── Screen Share Video vom Remote ──
+      if (!remoteScreenStreams.has(stream.id)) {
+        console.log("Screen Share Video empfangen → Container erstellen");
+        const container = createVideoContainer(stream, "Sarah's Screen", false);
         const video = container.querySelector("video");
-        // Video NICHT muten — Audio soll direkt über das Video-Element spielen
-        video.muted = false;
-        video.volume = 1;
-        video.play().catch(e => console.warn("Video autoplay blockiert:", e));
-        console.log("Screen Share Container erstellt ✓ (audio unmuted)");
+        video.muted = true; // Audio kommt separat oder über Audio-Track im selben Stream
+        video.play().catch(e => console.warn("Video autoplay:", e));
+
+        // Audio-Track im selben Stream? → separates Audio-Element
+        let audioEl = null;
+        if (stream.getAudioTracks().length > 0) {
+          audioEl = new Audio();
+          audioEl.srcObject = stream;
+          audioEl.autoplay = true;
+          audioEl.volume = 1;
+          audioEl.play().catch(e => console.warn("Screen Audio play:", e));
+          document.body.appendChild(audioEl);
+        }
+
+        remoteScreenStreams.set(stream.id, { container, audioEl });
+
+        // Wenn später Audio-Track hinzukommt
+        stream.onaddtrack = (e) => {
+          if (e.track.kind === "audio" && !remoteScreenStreams.get(stream.id)?.audioEl) {
+            const entry = remoteScreenStreams.get(stream.id);
+            if (entry) {
+              const newAudio = new Audio();
+              newAudio.srcObject = stream;
+              newAudio.autoplay = true;
+              newAudio.volume = 1;
+              newAudio.play().catch(() => {});
+              document.body.appendChild(newAudio);
+              entry.audioEl = newAudio;
+            }
+          }
+        };
       }
-    } else if (event.track.kind === 'audio') {
-      // Audio-only Stream → Mikrofon-Audio abspielen
+
+      // Track-Ende → Container aufräumen
+      track.onended = () => {
+        const entry = remoteScreenStreams.get(stream.id);
+        if (entry) {
+          entry.container?.remove();
+          entry.audioEl?.remove();
+          remoteScreenStreams.delete(stream.id);
+        }
+        removeVideoContainer(stream.id);
+      };
+
+    } else if (track.kind === "audio") {
+      // ── Mikrofon-Audio vom Remote ──
+      // Nur wenn kein Video im selben Stream (sonst ist es Screen-Share-Audio → schon oben behandelt)
+      if (stream.getVideoTracks().length > 0) {
+        // Gehört zum Screen Share Stream → schon oben behandelt
+        console.log("Audio-Track gehört zu Screen Share Stream → ignoriert");
+        return;
+      }
+
+      console.log("Mikrofon-Audio empfangen, userAudioElements:", userAudioElements.size);
+
+      // Passendes Audio-Element suchen (das noch keinen srcObject hat)
       let assigned = false;
       for (const [id, audio] of userAudioElements) {
-        audio.srcObject = stream;
-        audio.play().catch(e => console.warn("Audio play fehlgeschlagen:", e));
-        assigned = true;
-        console.log("Mikrofon-Audio zugewiesen an User:", id);
-        break; // Nur einem User zuweisen
+        if (!audio.srcObject || audio.srcObject.getTracks().length === 0) {
+          audio.srcObject = stream;
+          audio.play().catch(e => console.warn("Audio play:", e));
+          console.log("Mikrofon-Audio → User:", id);
+          assigned = true;
+          break;
+        }
       }
-      
-      // Falls noch kein User-Tile vorhanden: Fallback Audio-Element erstellen
+
       if (!assigned) {
-        const fallbackAudio = document.createElement("audio");
-        fallbackAudio.srcObject = stream;
-        fallbackAudio.autoplay = true;
-        fallbackAudio.volume = 1;
-        fallbackAudio.dataset.pendingAudio = "true";
-        fallbackAudio.dataset.streamId = stream.id;
-        document.body.appendChild(fallbackAudio);
-        fallbackAudio.play().catch(e => console.warn("Fallback audio play fehlgeschlagen:", e));
-        console.log("Mikrofon-Audio: Fallback erstellt und spielt ✓");
+        // Noch kein User-Tile → als pending speichern
+        console.log("Kein User-Tile vorhanden → pending");
+        pendingAudioStreams.push(stream);
       }
     }
-    
-    // Track Ende behandeln
-    stream.onremovetrack = () => {
-      if (stream.getTracks().length === 0) {
-        removeVideoContainer(stream.id);
-        const screenAudio = document.querySelector(`audio[data-stream-id="${stream.id}"]`);
-        if (screenAudio) screenAudio.remove();
-      }
-    };
   };
+}
+
+// ── ICE Restart bei failed connection ──
+async function tryIceRestart() {
+  if (!peerConnection || !localStream) return;
+  try {
+    console.log("ICE Restart...");
+    const offer = await peerConnection.createOffer({ iceRestart: true });
+    offer.sdp = optimizeAudioSDP(offer.sdp);
+    await peerConnection.setLocalDescription(offer);
+    socket.emit("signal", { offer });
+    console.log("ICE Restart Offer gesendet ✓");
+  } catch (e) {
+    console.error("ICE Restart fehlgeschlagen:", e);
+  }
 }
 
 // ---- Join Button ----
