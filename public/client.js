@@ -39,12 +39,13 @@ let peerConnection;
 let screenStream;
 let isMuted = false;
 let statsInterval;
+let vadInterval = null; // Voice Activity Detection
 let username = "";
 let userProfilePic = ""; // Profilbild URL
 let participants = new Map(); // userId -> {username, tile, audio, profilePic}
 let currentContextTarget = null; // Video/User container aktuell im Context Menu
 let userAudioElements = new Map(); // userId -> audio element (Mikrofon)
-let remoteScreenStreams = new Map(); // streamId -> { container, audioEl }
+let remoteScreenStreams = new Map(); // streamId -> { container, audioEl, remoteUsername }
 let currentQuality = "medium"; // Stream Qualität: low, medium, high, ultra
 let pendingAudioStreams = []; // Streams die ankamen bevor User-Tile existierte
 
@@ -131,7 +132,8 @@ const profileOptions = document.querySelectorAll(".profile-option");
 const contextMenu = document.getElementById("contextMenu");
 const participantsList = document.getElementById("participantsList");
 const contextVolumeSlider = document.getElementById("contextVolumeSlider");
-const contextVolumeLabel = document.getElementById("contextVolumeLabel");
+// FIX 1: ID im HTML ist contextVolumeValue, nicht contextVolumeLabel
+const contextVolumeLabel = document.getElementById("contextVolumeValue");
 const contextFullscreen = document.getElementById("contextFullscreen");
 
 // ---- Audio Geräte Auswahl ----
@@ -397,6 +399,12 @@ function updateConnectionStatus(connected) {
   }
 }
 
+// FIX 3: participantCount wird jetzt immer aktualisiert
+function updateParticipantCount() {
+  const countEl = document.getElementById("participantCount");
+  if (countEl) countEl.textContent = participants.size;
+}
+
 // ---- User Tile erstellen (Discord-Style) ----
 function createUserTile(userId, name, isLocal = false, profilePic = "") {
   // Prüfen ob Tile schon existiert
@@ -461,6 +469,7 @@ function createUserTile(userId, name, isLocal = false, profilePic = "") {
   
   videoGrid.appendChild(tile);
   emptyState.style.display = "none";
+  updateParticipantCount(); // FIX 3
   
   return tile;
 }
@@ -476,6 +485,7 @@ function removeUserTile(userId) {
   }
   
   participants.delete(userId);
+  updateParticipantCount(); // FIX 3
   
   // Empty State zeigen wenn keine User mehr
   if (videoGrid.children.length === 0 || 
@@ -484,6 +494,7 @@ function removeUserTile(userId) {
   }
 }
 
+// FIX 2: Label-Parameter statt hardcoded "Sarah's Screen"
 function createVideoContainer(stream, label, isLocal = false) {
   const container = document.createElement("div");
   container.className = "video-container";
@@ -603,58 +614,69 @@ async function createPeerConnection() {
     console.log("Signaling state:", peerConnection.signalingState);
   };
 
-  // ---- ontrack: Kern-Fix für Screen Share + Audio ----
+  // ---- FIX 5: ontrack — Screen Share Audio korrekt behandeln ----
   peerConnection.ontrack = (event) => {
     const track = event.track;
     // streams[0] kann fehlen → manuell erstellen
     const stream = event.streams[0] || new MediaStream([track]);
 
-    console.log(`ontrack: kind=${track.kind} streamId=${stream.id} streams=${event.streams.length}`);
+    console.log(`ontrack: kind=${track.kind} streamId=${stream.id} label=${track.label}`);
 
     if (track.kind === "video") {
-      // ── Screen Share Video vom Remote ──
+      // Screen Share Video vom Remote
       if (!remoteScreenStreams.has(stream.id)) {
-        console.log("Screen Share Video empfangen → Container erstellen");
-        const container = createVideoContainer(stream, "Sarah's Screen", false);
+        // FIX 2: Wer teilt? → aus participants herausfinden (nicht "ich", also der andere)
+        let remoteUsername = "";
+        participants.forEach((data, id) => {
+          if (id !== socket.id) remoteUsername = data.username;
+        });
+        const label = remoteUsername ? `${remoteUsername}'s Screen` : "Screen Share";
+
+        console.log(`Screen Share Video → Container erstellen: "${label}"`);
+        const container = createVideoContainer(stream, label, false);
         const video = container.querySelector("video");
-        video.muted = true; // Audio kommt separat oder über Audio-Track im selben Stream
+        video.muted = true; // Audio läuft über separates Audio-Element
         video.play().catch(e => console.warn("Video autoplay:", e));
 
-        // Audio-Track im selben Stream? → separates Audio-Element
+        // Audio-Tracks die JETZT schon im Stream sind
         let audioEl = null;
         if (stream.getAudioTracks().length > 0) {
-          audioEl = new Audio();
-          audioEl.srcObject = stream;
-          audioEl.autoplay = true;
-          audioEl.volume = 1;
-          audioEl.play().catch(e => console.warn("Screen Audio play:", e));
-          document.body.appendChild(audioEl);
+          audioEl = createScreenAudio(stream);
         }
 
-        remoteScreenStreams.set(stream.id, { container, audioEl });
+        remoteScreenStreams.set(stream.id, { container, audioEl, remoteUsername });
 
-        // Wenn später Audio-Track hinzukommt
-        stream.onaddtrack = (e) => {
-          if (e.track.kind === "audio" && !remoteScreenStreams.get(stream.id)?.audioEl) {
+        // FIX 5: Auch ZUKÜNFTIGE Audio-Tracks im selben Stream abfangen
+        // onaddtrack ist in Electron/Chromium unzuverlässig → wir pollen kurz
+        let pollCount = 0;
+        const pollAudio = setInterval(() => {
+          pollCount++;
+          const entry = remoteScreenStreams.get(stream.id);
+          if (!entry) { clearInterval(pollAudio); return; }
+
+          if (stream.getAudioTracks().length > 0 && !entry.audioEl) {
+            console.log("Screen Share Audio-Track per Poll gefunden ✓");
+            entry.audioEl = createScreenAudio(stream);
+            clearInterval(pollAudio);
+          }
+          if (pollCount >= 20) clearInterval(pollAudio); // max 4 Sekunden warten
+        }, 200);
+
+        // onaddtrack als zusätzliches Backup
+        stream.addEventListener("addtrack", (e) => {
+          if (e.track.kind === "audio") {
             const entry = remoteScreenStreams.get(stream.id);
-            if (entry) {
-              const newAudio = new Audio();
-              newAudio.srcObject = stream;
-              newAudio.autoplay = true;
-              newAudio.volume = 1;
-              newAudio.play().catch(() => {});
-              document.body.appendChild(newAudio);
-              entry.audioEl = newAudio;
+            if (entry && !entry.audioEl) {
+              console.log("Screen Share Audio-Track via addtrack ✓");
+              entry.audioEl = createScreenAudio(stream);
             }
           }
-        };
+        });
       }
 
-      // Track-Ende → Container aufräumen
       track.onended = () => {
         const entry = remoteScreenStreams.get(stream.id);
         if (entry) {
-          entry.container?.remove();
           entry.audioEl?.remove();
           remoteScreenStreams.delete(stream.id);
         }
@@ -662,35 +684,103 @@ async function createPeerConnection() {
       };
 
     } else if (track.kind === "audio") {
-      // ── Mikrofon-Audio vom Remote ──
-      // Nur wenn kein Video im selben Stream (sonst ist es Screen-Share-Audio → schon oben behandelt)
-      if (stream.getVideoTracks().length > 0) {
-        // Gehört zum Screen Share Stream → schon oben behandelt
-        console.log("Audio-Track gehört zu Screen Share Stream → ignoriert");
+      // Mikrofon-Audio ODER Screen Share Audio (separater Track)
+      // Wenn der Stream schon als Screen Share bekannt ist → Audio dort zuweisen
+      if (remoteScreenStreams.has(stream.id)) {
+        const entry = remoteScreenStreams.get(stream.id);
+        if (!entry.audioEl) {
+          console.log("Screen Share Audio-Track als separater ontrack empfangen ✓");
+          entry.audioEl = createScreenAudio(stream);
+        }
         return;
       }
 
-      console.log("Mikrofon-Audio empfangen, userAudioElements:", userAudioElements.size);
+      // Wenn der Stream ein Video-Track hat → Screen Share Audio (noch nicht registriert)
+      if (stream.getVideoTracks().length > 0) {
+        console.log("Audio-Track gehört zu Screen-Share-Stream → warte auf Video-ontrack");
+        // Wird über den pollAudio-Mechanismus oben abgeholt
+        return;
+      }
 
-      // Passendes Audio-Element suchen (das noch keinen srcObject hat)
+      // Mikrofon-Audio → User-Tile zuweisen
+      console.log("Mikrofon-Audio empfangen, userAudioElements:", userAudioElements.size);
       let assigned = false;
       for (const [id, audio] of userAudioElements) {
         if (!audio.srcObject || audio.srcObject.getTracks().length === 0) {
           audio.srcObject = stream;
           audio.play().catch(e => console.warn("Audio play:", e));
           console.log("Mikrofon-Audio → User:", id);
+          // FIX 4: Voice Activity Detection für diesen User starten
+          startVAD(stream, id);
           assigned = true;
           break;
         }
       }
 
       if (!assigned) {
-        // Noch kein User-Tile → als pending speichern
         console.log("Kein User-Tile vorhanden → pending");
         pendingAudioStreams.push(stream);
       }
     }
   };
+}
+
+// Hilfsfunktion: Audio-Element für Screen Share erstellen
+function createScreenAudio(stream) {
+  const audioEl = new Audio();
+  audioEl.srcObject = stream;
+  audioEl.autoplay = true;
+  audioEl.volume = 1;
+  audioEl.dataset.screenAudio = "true";
+  document.body.appendChild(audioEl);
+  audioEl.play().catch(e => console.warn("Screen Audio play:", e));
+  console.log("Screen Share Audio-Element erstellt ✓");
+  return audioEl;
+}
+
+// ---- FIX 4: Voice Activity Detection ----
+const vadAnalysers = new Map(); // userId -> { analyser, dataArray, audioCtx }
+
+function startVAD(stream, userId) {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioCtx.createMediaStreamSource(stream);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.3;
+    source.connect(analyser);
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    vadAnalysers.set(userId, { analyser, dataArray, audioCtx });
+    console.log("VAD gestartet für User:", userId);
+  } catch (e) {
+    console.warn("VAD konnte nicht gestartet werden:", e);
+  }
+}
+
+function stopVAD(userId) {
+  const entry = vadAnalysers.get(userId);
+  if (entry) {
+    try { entry.audioCtx.close(); } catch(e) {}
+    vadAnalysers.delete(userId);
+  }
+}
+
+function startVADLoop() {
+  if (vadInterval) return;
+  vadInterval = setInterval(() => {
+    vadAnalysers.forEach(({ analyser, dataArray }, userId) => {
+      analyser.getByteFrequencyData(dataArray);
+      const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+      const isSpeaking = avg > 12; // Schwellenwert
+
+      const tile = document.querySelector(`[data-user-id="${userId}"]`);
+      if (tile) tile.classList.toggle("speaking", isSpeaking);
+
+      // Auch in der Teilnehmerliste anzeigen
+      const participantAvatar = document.querySelector(`[data-participant-id="${userId}"]`);
+      if (participantAvatar) participantAvatar.classList.toggle("speaking", isSpeaking);
+    });
+  }, 80);
 }
 
 // ── ICE Restart bei failed connection ──
@@ -761,6 +851,7 @@ joinBtn.onclick = async () => {
     
     updateConnectionStatus(true);
     startStatsUpdate();
+    startVADLoop(); // FIX 4: VAD-Loop starten
     
   } catch (err) {
     console.error("Fehler beim Joinen:", err);
@@ -1104,6 +1195,13 @@ function cleanup() {
     statsInterval = null;
   }
   
+  if (vadInterval) {
+    clearInterval(vadInterval);
+    vadInterval = null;
+  }
+  vadAnalysers.forEach((_, userId) => stopVAD(userId));
+  vadAnalysers.clear();
+
   // Streams stoppen
   if (localStream) {
     localStream.getTracks().forEach(track => track.stop());
@@ -1129,13 +1227,15 @@ function cleanup() {
   participants.clear();
   userAudioElements.forEach(audio => audio.remove());
   userAudioElements.clear();
+  remoteScreenStreams.forEach(entry => { entry.audioEl?.remove(); });
+  remoteScreenStreams.clear();
   updateParticipantsList();
+  updateParticipantCount(); // FIX 3
   
   // UI zurücksetzen
   updateConnectionStatus(false);
   videoGrid.querySelectorAll(".video-container").forEach(el => el.remove());
-  document.querySelectorAll("audio[data-stream-id]").forEach(el => el.remove());
-  document.querySelectorAll('audio[data-pending-audio]').forEach(el => el.remove());
+  document.querySelectorAll("audio[data-screen-audio]").forEach(el => el.remove());
   screenBtn.classList.remove("active");
   screenBtn.style.display = "flex";
   stopScreenBtn.style.display = "none";
@@ -1219,6 +1319,7 @@ socket.on("signal", async (data) => {
         });
         updateConnectionStatus(true);
         startStatsUpdate();
+        startVADLoop(); // FIX 4
       }
 
       const answer = await peerConnection.createAnswer();
@@ -1264,7 +1365,8 @@ socket.on("screen-share-stopped", (data) => {
   });
   
   // Auch versteckte Audio-Elemente entfernen
-  document.querySelectorAll("audio[data-stream-id]").forEach(el => el.remove());
+  document.querySelectorAll("audio[data-screen-audio]").forEach(el => el.remove());
+  remoteScreenStreams.clear();
 });
 
 // ---- User List Update ----
@@ -1295,6 +1397,7 @@ socket.on("user-list", (users) => {
     }
   });
   updateParticipantsList();
+  updateParticipantCount(); // FIX 3
 });
 
 function updateParticipantsList() {
@@ -1309,12 +1412,13 @@ function updateParticipantsList() {
       ? `<img src="${data.profilePic}" alt="${data.username}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`
       : data.username.charAt(0).toUpperCase();
     item.innerHTML = `
-      <div class="participant-avatar">${avatarContent}</div>
-      <div class="participant-name">${escapeHtml(data.username)}${isMe ? " (Du)" : ""}</div>
+      <div class="participant-avatar" data-participant-id="${id}">${avatarContent}</div>
+      <div class="participant-name${isMe ? ' you' : ''}">${escapeHtml(data.username)}${isMe ? " (Du)" : ""}</div>
       <div class="participant-status">🟢</div>
     `;
     participantsList.appendChild(item);
   });
+  updateParticipantCount(); // FIX 3
 }
 
 // ---- Context Menu ----
@@ -1333,9 +1437,9 @@ function showContextMenu(x, y, container, video) {
   contextMenu.classList.add("visible");
   
   // Volume Slider auf aktuellen Wert setzen
-  const currentVolume = Math.round(video.volume * 100);
+  const currentVolume = Math.round((video.volume || 1) * 100);
   contextVolumeSlider.value = currentVolume;
-  contextVolumeLabel.textContent = currentVolume + "%";
+  if (contextVolumeLabel) contextVolumeLabel.textContent = currentVolume + "%"; // FIX 1
 }
 
 function hideContextMenu() {
@@ -1356,7 +1460,7 @@ if (contextVolumeSlider) {
     if (!currentContextTarget) return;
     const vol = contextVolumeSlider.value / 100;
     currentContextTarget.video.volume = vol;
-    contextVolumeLabel.textContent = contextVolumeSlider.value + "%";
+    if (contextVolumeLabel) contextVolumeLabel.textContent = contextVolumeSlider.value + "%"; // FIX 1
   };
 }
 
