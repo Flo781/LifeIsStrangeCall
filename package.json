@@ -64,7 +64,10 @@
         }
       ],
       "icon": "assets/icons/icon_512.png",
-      "category": "public.app-category.social-networking"
+      "category": "public.app-category.social-networking",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null
     },
     "nsis": {
       "oneClick": true,
@@ -73,7 +76,30 @@
       "installerIcon": "assets/icons/icon.ico"
     },
     "dmg": {
-      "title": "LifeIsStrangeCall"
+      "title": "LifeIsStrangeCall",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220,
+          "type": "file"
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 270,
+          "y": 380,
+          "type": "file",
+          "path": "fix-mac.command"
+        }
+      ],
+      "window": {
+        "width": 540,
+        "height": 500
+      }
     }
   }
 }
