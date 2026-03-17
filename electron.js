@@ -22,7 +22,6 @@ function isBlackHoleInstalled() {
 
 function installPkg(pkgPath) {
   return new Promise((resolve, reject) => {
-    // Pfad für AppleScript korrekt escapen (einfache Anführungszeichen müssen escaped werden)
     const escapedPath = pkgPath.replace(/'/g, "'\\''");
     const script = `do shell script "installer -pkg '${escapedPath}' -target /" with administrator privileges`;
     exec(`osascript -e ${JSON.stringify(script)}`, (err, stdout, stderr) => {
@@ -51,37 +50,23 @@ async function installBlackHoleIfNeeded() {
     cancelId: 1,
   });
 
-  if (response === 1) {
-    console.log("BlackHole Installation übersprungen");
-    return;
-  }
+  if (response === 1) return;
 
-  // Progress Fenster anzeigen
   const progressWin = new BrowserWindow({
-    width: 420,
-    height: 160,
-    resizable: false,
-    minimizable: false,
-    maximizable: false,
-    modal: true,
-    parent: mainWindow,
-    frame: false,
+    width: 420, height: 160, resizable: false, minimizable: false, maximizable: false,
+    modal: true, parent: mainWindow, frame: false,
     webPreferences: { contextIsolation: false, nodeIntegration: true },
     backgroundColor: "#1a1a2e",
   });
 
   progressWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(`
     <html><head><meta charset="UTF-8"><style>
-      * { margin:0; padding:0; box-sizing:border-box; }
-      body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0;
-             display: flex; flex-direction: column; align-items: center;
-             justify-content: center; height: 100vh; gap: 12px; }
-      h3 { color: #c89b7b; font-size: 15px; }
-      p  { font-size: 12px; color: #aaa; }
-      .bar-wrap { width: 320px; height: 6px; background: #2a2a3e; border-radius: 3px; }
-      .bar { height: 6px; background: #c89b7b; border-radius: 3px;
-             animation: load 8s linear forwards; }
-      @keyframes load { from { width: 0% } to { width: 95% } }
+      *{margin:0;padding:0;box-sizing:border-box;}
+      body{font-family:'Segoe UI',sans-serif;background:#1a1a2e;color:#e0e0e0;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:12px;}
+      h3{color:#c89b7b;font-size:15px;} p{font-size:12px;color:#aaa;}
+      .bar-wrap{width:320px;height:6px;background:#2a2a3e;border-radius:3px;}
+      .bar{height:6px;background:#c89b7b;border-radius:3px;animation:load 8s linear forwards;}
+      @keyframes load{from{width:0%}to{width:95%}}
     </style></head><body>
       <h3>🔧 BlackHole wird installiert...</h3>
       <div class="bar-wrap"><div class="bar"></div></div>
@@ -89,40 +74,27 @@ async function installBlackHoleIfNeeded() {
     </body></html>
   `));
 
-  // .pkg direkt aus dem App-Bundle — kein Internet nötig!
-  // Im Dev-Modus: assets/installers/, im gebauten Build: resources/installers/
   const bundledPkg = app.isPackaged
     ? path.join(process.resourcesPath, "installers", "BlackHole2ch.pkg")
     : path.join(__dirname, "assets", "installers", "BlackHole2ch.pkg");
 
   try {
-    if (!fs.existsSync(bundledPkg)) {
-      throw new Error("BlackHole2ch.pkg nicht im App-Bundle gefunden.");
-    }
-
+    if (!fs.existsSync(bundledPkg)) throw new Error("BlackHole2ch.pkg nicht im App-Bundle gefunden.");
     await installPkg(bundledPkg);
-
     if (!progressWin.isDestroyed()) progressWin.close();
-
-    // Kein Neustart nötig! Einfach Erfolgsmeldung anzeigen
     await dialog.showMessageBox(mainWindow, {
-      type: "info",
-      title: "✅ Installation erfolgreich!",
+      type: "info", title: "✅ Installation erfolgreich!",
       message: "BlackHole wurde erfolgreich installiert!",
-      detail: "System-Audio beim Bildschirm teilen ist jetzt verfügbar.\nDu kannst sofort loslegen!",
+      detail: "System-Audio beim Bildschirm teilen ist jetzt verfügbar.",
       buttons: ["OK"],
     });
-
   } catch (err) {
     console.error("BlackHole Installation fehlgeschlagen:", err);
     if (!progressWin.isDestroyed()) progressWin.close();
-
     await dialog.showMessageBox(mainWindow, {
-      type: "warning",
-      title: "Installation fehlgeschlagen",
+      type: "warning", title: "Installation fehlgeschlagen",
       message: "BlackHole konnte nicht automatisch installiert werden.",
-      detail: "Fehler: " + err.message,
-      buttons: ["OK"],
+      detail: "Fehler: " + err.message, buttons: ["OK"],
     });
   }
 }
@@ -131,17 +103,10 @@ async function installBlackHoleIfNeeded() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 900,
-    minHeight: 600,
+    width: 1400, height: 900, minWidth: 900, minHeight: 600,
     title: "LifeIsStrangeCall",
     icon: path.join(__dirname, "assets/icons/Adobe Express - file.png"),
-    webPreferences: {
-      contextIsolation: false,
-      nodeIntegration: true,
-      webSecurity: false,
-    },
+    webPreferences: { contextIsolation: false, nodeIntegration: true, webSecurity: false },
     backgroundColor: "#1a1a2e",
     show: false,
   });
@@ -150,22 +115,6 @@ function createWindow() {
     callback(true);
   });
   session.defaultSession.setPermissionCheckHandler(() => true);
-
-  // Screen Share Handler mit eigenem Picker
-  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
-    desktopCapturer.getSources({
-      types: ["screen", "window"],
-      thumbnailSize: { width: 320, height: 180 },
-      fetchWindowIcons: true,
-    }).then((sources) => {
-      // BlackHole direkt über system_profiler prüfen (funktioniert auch ohne Neustart)
-      const blackHoleInstalled = isBlackHoleInstalled();
-      openPickerWindow(sources, callback, blackHoleInstalled);
-    }).catch(err => {
-      console.error("desktopCapturer Fehler:", err);
-      callback({});
-    });
-  }, { useSystemPicker: false });
 
   if (process.platform === "darwin") {
     systemPreferences.getMediaAccessStatus("screen");
@@ -177,7 +126,6 @@ function createWindow() {
 
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
-    // BlackHole nach kurzem Delay prüfen (Fenster muss erst geladen sein)
     setTimeout(() => installBlackHoleIfNeeded(), 2000);
   });
 
@@ -187,31 +135,52 @@ function createWindow() {
   });
 }
 
-// ---- Screen Share Picker ----
+// ---- IPC: Screen Share Picker ----
+// Der Renderer ruft "open-screen-picker" auf und bekommt die sourceId zurück.
+// Dann macht der Renderer selbst getUserMedia({ chromeMediaSourceId }) — kein getDisplayMedia nötig!
 
-function openPickerWindow(sources, callback, blackHoleInstalled) {
+ipcMain.handle("open-screen-picker", async () => {
+  return new Promise(async (resolve) => {
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ["screen", "window"],
+        thumbnailSize: { width: 320, height: 180 },
+        fetchWindowIcons: true,
+      });
+
+      const blackHoleInstalled = isBlackHoleInstalled();
+      openPickerWindow(sources, blackHoleInstalled, (result) => {
+        resolve(result); // { sourceId, withAudio, blackHoleDeviceId } oder null
+      });
+    } catch (err) {
+      console.error("desktopCapturer Fehler:", err);
+      resolve(null);
+    }
+  });
+});
+
+// ---- Screen Share Picker Fenster ----
+
+function openPickerWindow(sources, blackHoleInstalled, onResult) {
   if (pickerWindow && !pickerWindow.isDestroyed()) pickerWindow.destroy();
 
   const isMac = process.platform === "darwin";
   const isWin = process.platform === "win32";
 
   pickerWindow = new BrowserWindow({
-    width: 800,
-    height: 620,
+    width: 800, height: 620,
     title: "Bildschirm oder Fenster wählen",
-    resizable: false,
-    minimizable: false,
-    maximizable: false,
-    modal: true,
-    parent: mainWindow,
-    webPreferences: {
-      contextIsolation: false,
-      nodeIntegration: true,
-    },
+    resizable: false, minimizable: false, maximizable: false,
+    modal: true, parent: mainWindow,
+    webPreferences: { contextIsolation: false, nodeIntegration: true },
     backgroundColor: "#1a1a2e",
   });
 
   pickerWindow.setMenu(null);
+
+  // Alte Listener immer zuerst entfernen
+  ipcMain.removeAllListeners("picker-selected");
+  ipcMain.removeAllListeners("picker-cancelled");
 
   const sourcesJson = JSON.stringify(sources.map(s => ({
     id: s.id,
@@ -223,7 +192,10 @@ function openPickerWindow(sources, callback, blackHoleInstalled) {
   const macAudioHint = isMac ? `
     <div id="macAudioHint" style="margin-top:8px;padding:10px 14px;background:#16213e;
       border-left:3px solid #c89b7b;border-radius:6px;font-size:12px;color:#bbb;line-height:1.6;">
-      <span id="audioHintText">${blackHoleInstalled ? '✅ BlackHole erkannt — System-Audio wird übertragen!' : '⚠️ BlackHole nicht erkannt. Starte die App neu falls du es gerade installiert hast.'}</span>
+      <span id="audioHintText">${blackHoleInstalled
+        ? "✅ BlackHole erkannt — System-Audio wird übertragen!"
+        : "⚠️ BlackHole nicht gefunden — kein System-Audio auf Mac möglich."
+      }</span>
     </div>` : "";
 
   const winAudioHint = isWin ? `
@@ -262,7 +234,7 @@ function openPickerWindow(sources, callback, blackHoleInstalled) {
   <div class="section-title">Fenster / Anwendungen</div>
   <div class="grid" id="windowGrid"></div>
   <div class="audio-row">
-    <input type="checkbox" id="audioCheck" ${(isMac && blackHoleInstalled) ? 'checked' : (isWin ? 'checked' : 'disabled')}>
+    <input type="checkbox" id="audioCheck" ${isWin ? "checked" : ""}>
     <label for="audioCheck">System-Audio mitübertragen</label>
   </div>
   ${macAudioHint}
@@ -281,20 +253,24 @@ function openPickerWindow(sources, callback, blackHoleInstalled) {
 
     async function checkBlackHole() {
       if (!isMac) return;
+      const audioCheck = document.getElementById('audioCheck');
       const hint = document.getElementById('audioHintText');
+      if (!hint) return;
       try {
         await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {});
         const devices = await navigator.mediaDevices.enumerateDevices();
         const bh = devices.find(d => d.kind === 'audioinput' && d.label.toLowerCase().includes('blackhole'));
         if (bh) {
           blackHoleDeviceId = bh.deviceId;
+          audioCheck.checked = true;
+          audioCheck.disabled = false;
           hint.innerHTML = '✅ BlackHole erkannt — System-Audio wird übertragen!';
           hint.parentElement.style.borderColor = '#4caf50';
         } else {
-          hint.innerHTML = '⚠️ BlackHole nicht erkannt. Starte die App neu falls du es gerade installiert hast.';
+          audioCheck.checked = false;
+          audioCheck.disabled = true;
+          hint.innerHTML = '⚠️ BlackHole nicht gefunden — kein System-Audio möglich.';
           hint.parentElement.style.borderColor = '#e57373';
-          document.getElementById('audioCheck').checked = false;
-          document.getElementById('audioCheck').disabled = true;
         }
       } catch(e) {
         hint.innerHTML = '⚠️ Audio-Geräte konnten nicht geprüft werden.';
@@ -340,64 +316,39 @@ function openPickerWindow(sources, callback, blackHoleInstalled) {
     document.getElementById('cancelBtn').onclick = () => ipcRenderer.send('picker-cancelled');
     renderSources();
     checkBlackHole();
-  </script></body></html>`;
+  <\/script></body></html>`;
 
   pickerWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(pickerHTML));
 
-  ipcMain.once("picker-selected", (event, { sourceId, withAudio, blackHoleDeviceId }) => {
-    const source = sources.find(s => s.id === sourceId);
-    if (source) {
-      // FIX: Kein "loopback" mehr — das wirft einen Fehler in neuem Electron!
-      // Windows: audio:true reicht, Electron handled das intern über getDisplayMedia
-      // macOS: BlackHole deviceId separat an client.js übergeben
-      let audioMode = false;
-      if (withAudio) {
-        if (process.platform === "win32") {
-          audioMode = true; // Windows: einfach true, kein "loopback"
-        } else if (process.platform === "darwin" && blackHoleDeviceId) {
-          mainWindow.webContents.executeJavaScript(
-            `window._blackHoleDeviceId = ${JSON.stringify(blackHoleDeviceId)};`
-          ).catch(() => {});
-        }
-      }
-      callback({ video: source, audio: audioMode });
-    } else {
-      callback({});
-    }
+  ipcMain.once("picker-selected", (event, data) => {
     if (pickerWindow && !pickerWindow.isDestroyed()) pickerWindow.close();
     pickerWindow = null;
+    onResult(data); // { sourceId, withAudio, blackHoleDeviceId }
   });
 
   ipcMain.once("picker-cancelled", () => {
     if (pickerWindow && !pickerWindow.isDestroyed()) pickerWindow.destroy();
     pickerWindow = null;
+    onResult(null);
   });
 
   pickerWindow.on("closed", () => {
-    ipcMain.removeAllListeners("picker-selected");
-    ipcMain.removeAllListeners("picker-cancelled");
     pickerWindow = null;
   });
 }
 
-// ---- IPC: Audio-Geräte vom Renderer anfragen ----
-ipcMain.handle("get-audio-devices", async () => {
-  // Renderer kann das selbst — wir geben nur das Signal
-  return true;
-});
+// ---- IPC: Audio-Geräte ----
+ipcMain.handle("get-audio-devices", async () => true);
 
 // ---- App Start ----
 
-// macOS: App entsperrt sich beim ersten Start selbst
 function removeSelfQuarantine() {
   if (process.platform !== "darwin") return;
   try {
     const appPath = app.getPath("exe").split(".app/")[0] + ".app";
     execSync(`xattr -rd com.apple.quarantine "${appPath}" 2>/dev/null || true`);
     console.log("Quarantine entfernt ✓");
-  } catch (e) {
-    // Kein Problem wenn es fehlschlägt
-  }
+  } catch (e) {}
 }
 
 app.whenReady().then(() => {

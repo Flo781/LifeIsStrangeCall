@@ -452,6 +452,8 @@ function createUserTile(userId, name, isLocal = false, profilePic = "") {
       const stream = pendingAudioStreams.shift();
       audio.srcObject = stream;
       audio.play().catch(e => console.warn("Pending audio play:", e));
+      // FIX VAD: auch für pending streams starten
+      startVAD(stream, userId);
       console.log("Pending Audio → User:", userId);
     }
       
@@ -941,6 +943,9 @@ qualityOptions.forEach(option => {
   };
 });
 
+// Am Anfang der Datei — ipcRenderer holen (Electron stellt das global bereit)
+const { ipcRenderer } = window.require ? window.require("electron") : { ipcRenderer: null };
+
 // ---- Screen Share Button ----
 screenBtn.onclick = async () => {
   if (!peerConnection) {
@@ -949,133 +954,156 @@ screenBtn.onclick = async () => {
   }
 
   try {
+    // 1) Picker öffnen → sourceId vom Main-Prozess holen
+    let pickerResult = null;
+    if (ipcRenderer) {
+      pickerResult = await ipcRenderer.invoke("open-screen-picker");
+    }
+
+    if (!pickerResult) {
+      // Abgebrochen oder kein ipcRenderer (Browser-Fallback)
+      return;
+    }
+
+    const { sourceId, withAudio, blackHoleDeviceId } = pickerResult;
     const preset = qualityPresets[currentQuality];
-    const videoConstraints = {
-      frameRate: { ideal: preset.fps, max: preset.fps },
-      width: { ideal: preset.width, max: preset.width },
-      height: { ideal: preset.height, max: preset.height }
-    };
 
-    let audioFallbackUsed = false;
+    // 2) Video-Stream via getUserMedia + chromeMediaSourceId holen (KEIN getDisplayMedia!)
+    const videoStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        mandatory: {
+          chromeMediaSource: "desktop",
+          chromeMediaSourceId: sourceId,
+          maxWidth: preset.width,
+          maxHeight: preset.height,
+          maxFrameRate: preset.fps,
+        }
+      }
+    });
 
-    // Versuch 1: Mit System-Audio (funktioniert in Electron auf Windows via loopback)
-    try {
-      screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: videoConstraints,
-        audio: true,
-        selfBrowserSurface: "exclude",
-        surfaceSwitching: "include"
-      });
-      console.log("Screen Share: Audio erfolgreich ✓");
-    } catch (err) {
-      if (err.name === "NotReadableError" || err.name === "NotFoundError" || err.name === "AbortError") {
-        console.warn("Screen Share: System-Audio fehlgeschlagen (" + err.name + ") → Versuche Fallback");
-        screenStream = await navigator.mediaDevices.getDisplayMedia({
-          video: videoConstraints,
-          audio: false,
-          selfBrowserSurface: "exclude",
-          surfaceSwitching: "include"
-        });
-        audioFallbackUsed = true;
-      } else {
-        throw err;
+    screenStream = videoStream;
+
+    // 3) Audio hinzufügen
+    if (withAudio) {
+      // macOS + BlackHole
+      if (blackHoleDeviceId) {
+        try {
+          const bhStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              deviceId: { exact: blackHoleDeviceId },
+              channelCount: 2,
+              sampleRate: 48000,
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            }
+          });
+          bhStream.getAudioTracks().forEach(track => {
+            screenStream.addTrack(track);
+            videoStream.getVideoTracks()[0]?.addEventListener("ended", () => track.stop());
+          });
+          addSystemMessage("✅ BlackHole System-Audio aktiv");
+          console.log("Screen Share: BlackHole Audio hinzugefügt ✓");
+        } catch (bhErr) {
+          console.warn("BlackHole Audio fehlgeschlagen:", bhErr.message);
+          addSystemMessage("⚠️ BlackHole Audio fehlgeschlagen — kein System-Ton");
+        }
+      } else if (process.platform === "win32") {
+        // Windows: loopback Audio über chromeMediaSource desktop
+        try {
+          const winAudioStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              mandatory: {
+                chromeMediaSource: "desktop",
+                chromeMediaSourceId: sourceId,
+              }
+            },
+            video: false
+          });
+          winAudioStream.getAudioTracks().forEach(track => {
+            screenStream.addTrack(track);
+            videoStream.getVideoTracks()[0]?.addEventListener("ended", () => track.stop());
+          });
+          addSystemMessage("✅ Windows System-Audio aktiv");
+          console.log("Screen Share: Windows loopback Audio ✓");
+        } catch (winErr) {
+          console.warn("Windows Audio fehlgeschlagen:", winErr.message);
+        }
       }
     }
 
-    // macOS + BlackHole: Audio separat per getUserMedia holen und zum Stream hinzufügen
-    const blackHoleId = window._blackHoleDeviceId;
-    if (blackHoleId) {
-      try {
-        const bhStream = await navigator.mediaDevices.getUserMedia({
-          audio: { deviceId: { exact: blackHoleId }, channelCount: 2, sampleRate: 48000 }
-        });
-        bhStream.getAudioTracks().forEach(track => {
-          screenStream.addTrack(track);
-          screenStream.getVideoTracks()[0]?.addEventListener("ended", () => track.stop());
-        });
-        window._blackHoleDeviceId = null; // einmal benutzt → zurücksetzen
-        audioFallbackUsed = false;
-        console.log("Screen Share: BlackHole Audio hinzugefügt ✓");
-        addSystemMessage("✅ BlackHole System-Audio aktiv");
-      } catch (bhErr) {
-        console.warn("BlackHole Audio fehlgeschlagen:", bhErr.message);
-        audioFallbackUsed = true;
-      }
-    }
-
-    // Letzter Fallback: Mikrofon als Audio-Quelle
-    if (audioFallbackUsed && screenStream.getAudioTracks().length === 0) {
+    // Kein Audio? → Mikrofon als Fallback anbieten
+    if (screenStream.getAudioTracks().length === 0 && withAudio) {
       try {
         const micFallback = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000, channelCount: 2 }
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            sampleRate: 48000,
+            channelCount: 2,
+          }
         });
         micFallback.getAudioTracks().forEach(track => {
           screenStream.addTrack(track);
-          screenStream.getVideoTracks()[0]?.addEventListener("ended", () => track.stop());
+          videoStream.getVideoTracks()[0]?.addEventListener("ended", () => track.stop());
         });
-        addSystemMessage("⚠️ System-Audio nicht verfügbar — Mikrofon wird als Ton-Quelle genutzt");
+        addSystemMessage("⚠️ Kein System-Audio — Mikrofon wird als Ton-Quelle genutzt");
         console.log("Screen Share: Mikrofon-Fallback aktiv ✓");
       } catch (micErr) {
         addSystemMessage("⚠️ Kein Ton beim Screen Share möglich");
-        console.warn("Screen Share: Kein Audio verfügbar:", micErr.message);
       }
     }
 
     console.log("Screen Share Audio Tracks:", screenStream.getAudioTracks().length);
 
-    // Video Container für lokale Vorschau erstellen
+    // 4) Lokale Vorschau
     createVideoContainer(screenStream, `${username}'s Screen (Vorschau)`, true);
-
     socket.emit("screen-share-started", { id: socket.id });
 
+    // 5) Tracks in PeerConnection einfügen + Renegotiation
     isNegotiating = true;
     try {
-      console.log("Screen Share: Füge Tracks hinzu...");
-
       screenStream.getTracks().forEach(track => {
         const sender = peerConnection.addTrack(track, screenStream);
 
-        if (track.kind === 'video') {
-          try { track.contentHint = 'detail'; } catch(e) {}
+        if (track.kind === "video") {
+          try { track.contentHint = "detail"; } catch(e) {}
 
           try {
             const transceiver = peerConnection.getTransceivers().find(t => t.sender === sender);
-            if (transceiver && typeof transceiver.setCodecPreferences === 'function') {
-              const capabilities = RTCRtpReceiver.getCapabilities('video');
-              if (capabilities && capabilities.codecs) {
-                const vp8 = capabilities.codecs.filter(c => c.mimeType.toLowerCase() === 'video/vp8');
-                const rest = capabilities.codecs.filter(c => c.mimeType.toLowerCase() !== 'video/vp8');
+            if (transceiver && typeof transceiver.setCodecPreferences === "function") {
+              const capabilities = RTCRtpReceiver.getCapabilities("video");
+              if (capabilities?.codecs) {
+                const vp8 = capabilities.codecs.filter(c => c.mimeType.toLowerCase() === "video/vp8");
+                const rest = capabilities.codecs.filter(c => c.mimeType.toLowerCase() !== "video/vp8");
                 if (vp8.length > 0) {
                   transceiver.setCodecPreferences([...vp8, ...rest]);
-                  console.log('Screen Share: VP8 Codec bevorzugt');
+                  console.log("Screen Share: VP8 Codec bevorzugt");
                 }
               }
             }
-          } catch (codecErr) {
-            console.warn('Codec-Präferenzen konnten nicht gesetzt werden:', codecErr);
+          } catch(codecErr) {
+            console.warn("Codec-Präferenzen konnten nicht gesetzt werden:", codecErr);
           }
 
           const params = sender.getParameters();
           if (!params.encodings) params.encodings = [{}];
           params.encodings[0].maxBitrate = preset.bitrate;
           params.encodings[0].maxFramerate = preset.fps;
-          sender.setParameters(params).catch(e =>
-            console.warn("Video-Encoding fehlgeschlagen:", e)
-          );
+          sender.setParameters(params).catch(e => console.warn("Video-Encoding:", e));
         }
 
-        if (track.kind === 'audio') {
+        if (track.kind === "audio") {
           const params = sender.getParameters();
           if (!params.encodings) params.encodings = [{}];
           params.encodings[0].maxBitrate = 320000;
-          sender.setParameters(params).catch(e =>
-            console.warn("Audio-Encoding fehlgeschlagen:", e)
-          );
+          sender.setParameters(params).catch(e => console.warn("Audio-Encoding:", e));
         }
 
         track.onended = () => {
           try { peerConnection.removeTrack(sender); } catch(e) {}
-          if (track.kind === 'video') stopScreenShare();
+          if (track.kind === "video") stopScreenShare();
         };
       });
 
@@ -1090,11 +1118,12 @@ screenBtn.onclick = async () => {
       isNegotiating = false;
     }
 
+    // Track-Ende-Check nach 2s
     setTimeout(() => {
       if (screenStream) {
         const videoTrack = screenStream.getVideoTracks()[0];
-        if (videoTrack && videoTrack.readyState === 'ended') {
-          console.error('Screen Share: Video Track gestorben');
+        if (videoTrack && videoTrack.readyState === "ended") {
+          console.error("Screen Share: Video Track gestorben");
           stopScreenShare();
         }
       }

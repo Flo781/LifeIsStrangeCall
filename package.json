@@ -1,10 +1,14 @@
 {
-  "name": "disop",
-  "version": "1.0.0",
-  "description": "",
-  "main": "server.js",
+  "name": "LifeIsStrangeCall",
+  "version": "1.1.0",
+  "description": "Life is Strange Call App",
+  "main": "electron.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "electron": "electron .",
+    "build:win": "electron-builder --win --publish never",
+    "build:mac": "electron-builder --mac --publish never",
+    "build:all": "electron-builder --win --mac --publish never"
   },
   "keywords": [],
   "author": "",
@@ -12,5 +16,64 @@
   "dependencies": {
     "express": "^5.2.1",
     "socket.io": "^4.8.3"
+  },
+  "devDependencies": {
+    "electron": "^34.0.0",
+    "electron-builder": "^26.0.0",
+    "png-to-ico": "^3.0.1"
+  },
+  "build": {
+    "appId": "com.lis.call",
+    "productName": "LifeIsStrangeCall",
+    "asar": true,
+    "files": [
+      "electron.js",
+      "server.js",
+      "public/**/*",
+      "assets/**/*",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "assets/installers/BlackHole2ch.pkg",
+        "to": "installers/BlackHole2ch.pkg",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icons/icon.ico"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "assets/icons/icon_512.png",
+      "category": "public.app-category.social-networking"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "installerIcon": "assets/icons/icon.ico"
+    },
+    "dmg": {
+      "title": "LifeIsStrangeCall"
+    }
   }
 }
