@@ -954,114 +954,32 @@ screenBtn.onclick = async () => {
   }
 
   try {
-    // 1) Picker öffnen → sourceId vom Main-Prozess holen
-    let pickerResult = null;
-    if (ipcRenderer) {
-      pickerResult = await ipcRenderer.invoke("open-screen-picker");
-    }
+    const preset = qualityPresets[currentQuality];
 
-    if (!pickerResult) {
-      // Abgebrochen oder kein ipcRenderer (Browser-Fallback)
+    // getDisplayMedia() → Electron fängt das über setDisplayMediaRequestHandler ab
+    // und zeigt den eigenen Picker im Main-Prozess. Kein chromeMediaSource nötig!
+    screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        width: { ideal: preset.width },
+        height: { ideal: preset.height },
+        frameRate: { ideal: preset.fps },
+      },
+      audio: true // Electron Main-Prozess liefert loopback Audio auf Windows
+    });
+
+    if (!screenStream || screenStream.getTracks().length === 0) {
+      screenStream = null;
       return;
     }
 
-    const { sourceId, withAudio, blackHoleDeviceId } = pickerResult;
-    const preset = qualityPresets[currentQuality];
-
-    // 2) Video-Stream via getUserMedia + chromeMediaSourceId holen (KEIN getDisplayMedia!)
-    const videoStream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        mandatory: {
-          chromeMediaSource: "desktop",
-          chromeMediaSourceId: sourceId,
-          maxWidth: preset.width,
-          maxHeight: preset.height,
-          maxFrameRate: preset.fps,
-        }
-      }
-    });
-
-    screenStream = videoStream;
-
-    // 3) Audio hinzufügen
-    if (withAudio) {
-      // macOS + BlackHole
-      if (blackHoleDeviceId) {
-        try {
-          const bhStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              deviceId: { exact: blackHoleDeviceId },
-              channelCount: 2,
-              sampleRate: 48000,
-              echoCancellation: false,
-              noiseSuppression: false,
-              autoGainControl: false,
-            }
-          });
-          bhStream.getAudioTracks().forEach(track => {
-            screenStream.addTrack(track);
-            videoStream.getVideoTracks()[0]?.addEventListener("ended", () => track.stop());
-          });
-          addSystemMessage("✅ BlackHole System-Audio aktiv");
-          console.log("Screen Share: BlackHole Audio hinzugefügt ✓");
-        } catch (bhErr) {
-          console.warn("BlackHole Audio fehlgeschlagen:", bhErr.message);
-          addSystemMessage("⚠️ BlackHole Audio fehlgeschlagen — kein System-Ton");
-        }
-      } else if (process.platform === "win32") {
-        // Windows: loopback Audio über chromeMediaSource desktop
-        try {
-          const winAudioStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              mandatory: {
-                chromeMediaSource: "desktop",
-                chromeMediaSourceId: sourceId,
-              }
-            },
-            video: false
-          });
-          winAudioStream.getAudioTracks().forEach(track => {
-            screenStream.addTrack(track);
-            videoStream.getVideoTracks()[0]?.addEventListener("ended", () => track.stop());
-          });
-          addSystemMessage("✅ Windows System-Audio aktiv");
-          console.log("Screen Share: Windows loopback Audio ✓");
-        } catch (winErr) {
-          console.warn("Windows Audio fehlgeschlagen:", winErr.message);
-        }
-      }
-    }
-
-    // Kein Audio? → Mikrofon als Fallback anbieten
-    if (screenStream.getAudioTracks().length === 0 && withAudio) {
-      try {
-        const micFallback = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            sampleRate: 48000,
-            channelCount: 2,
-          }
-        });
-        micFallback.getAudioTracks().forEach(track => {
-          screenStream.addTrack(track);
-          videoStream.getVideoTracks()[0]?.addEventListener("ended", () => track.stop());
-        });
-        addSystemMessage("⚠️ Kein System-Audio — Mikrofon wird als Ton-Quelle genutzt");
-        console.log("Screen Share: Mikrofon-Fallback aktiv ✓");
-      } catch (micErr) {
-        addSystemMessage("⚠️ Kein Ton beim Screen Share möglich");
-      }
-    }
-
     console.log("Screen Share Audio Tracks:", screenStream.getAudioTracks().length);
+    console.log("Screen Share Video Tracks:", screenStream.getVideoTracks().length);
 
-    // 4) Lokale Vorschau
+    // Lokale Vorschau
     createVideoContainer(screenStream, `${username}'s Screen (Vorschau)`, true);
     socket.emit("screen-share-started", { id: socket.id });
 
-    // 5) Tracks in PeerConnection einfügen + Renegotiation
+    // Tracks in PeerConnection einfügen + Renegotiation
     isNegotiating = true;
     try {
       screenStream.getTracks().forEach(track => {

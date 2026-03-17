@@ -1,4 +1,10 @@
 const { app, BrowserWindow, session, desktopCapturer, ipcMain, systemPreferences, dialog } = require("electron");
+
+// GPU Crash-Fix für Screen Share auf Windows
+app.commandLine.appendSwitch('disable-features', 'WidgetLayering');
+app.commandLine.appendSwitch('disable-gpu-sandbox');
+app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer');
+
 const path = require("path");
 const { execSync, exec } = require("child_process");
 const fs = require("fs");
@@ -106,7 +112,13 @@ function createWindow() {
     width: 1400, height: 900, minWidth: 900, minHeight: 600,
     title: "LifeIsStrangeCall",
     icon: path.join(__dirname, "assets/icons/Adobe Express - file.png"),
-    webPreferences: { contextIsolation: false, nodeIntegration: true, webSecurity: false },
+    webPreferences: {
+      contextIsolation: false,
+      nodeIntegration: true,
+      webSecurity: false,
+      backgroundThrottling: false,
+      offscreen: false,
+    },
     backgroundColor: "#1a1a2e",
     show: false,
   });
@@ -115,6 +127,43 @@ function createWindow() {
     callback(true);
   });
   session.defaultSession.setPermissionCheckHandler(() => true);
+
+  // ---- Display Media Request Handler (Electron 34+ Fix für Screen Share) ----
+  // Renderer ruft getDisplayMedia() auf → Main-Prozess zeigt Picker und liefert Source
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ["screen", "window"],
+        thumbnailSize: { width: 320, height: 180 },
+        fetchWindowIcons: true,
+      });
+
+      const blackHoleInstalled = isBlackHoleInstalled();
+
+      openPickerWindow(sources, blackHoleInstalled, (result) => {
+        if (!result) {
+          callback({});
+          return;
+        }
+
+        const selectedSource = sources.find(s => s.id === result.sourceId);
+        if (!selectedSource) {
+          callback({});
+          return;
+        }
+
+        // Electron erwartet: callback({ video: source }) oder callback({ video: source, audio: 'loopback' })
+        const response = { video: selectedSource };
+        if (result.withAudio && process.platform === "win32") {
+          response.audio = "loopback";
+        }
+        callback(response);
+      });
+    } catch (err) {
+      console.error("setDisplayMediaRequestHandler Fehler:", err);
+      callback({});
+    }
+  });
 
   if (process.platform === "darwin") {
     systemPreferences.getMediaAccessStatus("screen");
@@ -133,31 +182,25 @@ function createWindow() {
     require("electron").shell.openExternal(url);
     return { action: "deny" };
   });
+
+  // Crash-Handler: Renderer abgestürzt → Fenster neu laden statt App schließen
+  mainWindow.webContents.on("render-process-gone", (event, details) => {
+    console.error("⚠️ Renderer abgestürzt!", details.reason, details.exitCode);
+    dialog.showMessageBox({ type: "error", title: "Renderer Crash", message: "Renderer abgestürzt: " + details.reason + " (Code: " + details.exitCode + ")\nApp wird neu geladen..." }).then(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.loadURL("http://localhost:3000");
+      }
+    });
+  });
+
+  mainWindow.webContents.on("crashed", (event) => {
+    console.error("⚠️ WebContents crashed!");
+  });
 }
 
-// ---- IPC: Screen Share Picker ----
-// Der Renderer ruft "open-screen-picker" auf und bekommt die sourceId zurück.
-// Dann macht der Renderer selbst getUserMedia({ chromeMediaSourceId }) — kein getDisplayMedia nötig!
-
-ipcMain.handle("open-screen-picker", async () => {
-  return new Promise(async (resolve) => {
-    try {
-      const sources = await desktopCapturer.getSources({
-        types: ["screen", "window"],
-        thumbnailSize: { width: 320, height: 180 },
-        fetchWindowIcons: true,
-      });
-
-      const blackHoleInstalled = isBlackHoleInstalled();
-      openPickerWindow(sources, blackHoleInstalled, (result) => {
-        resolve(result); // { sourceId, withAudio, blackHoleDeviceId } oder null
-      });
-    } catch (err) {
-      console.error("desktopCapturer Fehler:", err);
-      resolve(null);
-    }
-  });
-});
+// ---- IPC: Screen Share Picker (wird jetzt über setDisplayMediaRequestHandler gesteuert) ----
+// Der alte open-screen-picker IPC wurde durch setDisplayMediaRequestHandler ersetzt.
+// Der Renderer nutzt jetzt navigator.mediaDevices.getDisplayMedia() direkt.
 
 // ---- Screen Share Picker Fenster ----
 
@@ -350,6 +393,10 @@ function removeSelfQuarantine() {
     console.log("Quarantine entfernt ✓");
   } catch (e) {}
 }
+
+process.on("uncaughtException", (err) => {
+  console.error("⚠️ Uncaught Exception im Main-Prozess:", err);
+});
 
 app.whenReady().then(() => {
   removeSelfQuarantine();
