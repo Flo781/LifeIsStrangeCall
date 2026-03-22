@@ -928,6 +928,152 @@
       color: #fff;
     }
 
+    /* ---- Verbindungs-Modal ---- */
+    .connection-modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: url('/assets/Wallpaper/wallpaperflare.com_wallpaper.jpg') center/cover no-repeat;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1100;
+    }
+    .connection-modal-overlay.hidden { display: none; }
+    .connection-modal-overlay::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+    }
+    .connection-box {
+      background: rgba(26, 26, 46, 0.97);
+      border: 1px solid #7d8d9e;
+      border-radius: 16px;
+      padding: 32px 36px;
+      width: 420px;
+      max-width: 95vw;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      position: relative;
+      z-index: 1;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+    }
+    .connection-box h2 {
+      color: #c89b7b;
+      font-size: 18px;
+      text-align: center;
+      margin-bottom: 4px;
+    }
+    .connection-box label {
+      display: block;
+      font-size: 11px;
+      text-transform: uppercase;
+      color: #888;
+      letter-spacing: 1px;
+      margin-bottom: 6px;
+    }
+    .connection-box input[type="text"] {
+      width: 100%;
+      background: #16213e;
+      border: 1px solid #7d8d9e;
+      border-radius: 8px;
+      color: #e0e0e0;
+      font-size: 14px;
+      padding: 10px 14px;
+      outline: none;
+      font-family: inherit;
+      letter-spacing: 1px;
+    }
+    .connection-box input[type="text"]:focus { border-color: #c89b7b; }
+    .conn-buttons {
+      display: flex;
+      gap: 12px;
+    }
+    .conn-buttons button {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .conn-buttons button:hover { transform: scale(1.02); }
+    .conn-buttons button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    #createRoomBtn { background: #c89b7b; color: #1a1a2e; }
+    #createRoomBtn:hover:not(:disabled) { background: #d4aa8a; }
+    #joinRoomBtn { background: #2a2a4a; color: #ccc; border: 1px solid #7d8d9e; }
+    #joinRoomBtn:hover:not(:disabled) { background: #3a3a5a; }
+
+    .room-code-display {
+      background: #16213e;
+      border: 2px dashed #c89b7b;
+      border-radius: 12px;
+      padding: 16px;
+      text-align: center;
+    }
+    .room-code-display p { font-size: 13px; color: #aaa; margin-bottom: 8px; }
+    .room-code-value {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: 6px;
+      color: #c89b7b;
+      font-family: monospace;
+    }
+    .room-code-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 12px;
+      justify-content: center;
+    }
+    .room-code-actions button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    #copyCodeBtn { background: #2a2a4a; color: #ccc; border: 1px solid #7d8d9e; }
+    #proceedBtn { background: #c89b7b; color: #1a1a2e; font-weight: 600; }
+
+    .join-section {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .join-section input {
+      text-align: center;
+      font-size: 22px;
+      letter-spacing: 8px;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    #confirmJoinBtn {
+      width: 100%;
+      padding: 12px;
+      background: #c89b7b;
+      color: #1a1a2e;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.2s;
+    }
+    #confirmJoinBtn:hover:not(:disabled) { background: #d4aa8a; }
+    #confirmJoinBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    #connectionModalStatus {
+      text-align: center;
+      font-size: 13px;
+      min-height: 18px;
+    }
+
     /* Audio Device Modal */
     .audio-device-modal {
       position: fixed;
@@ -994,6 +1140,42 @@
           <div class="name">Flores</div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Verbindungs-Modal (erscheint nach Profil-Wahl) -->
+  <div class="connection-modal-overlay hidden" id="connectionModal">
+    <div class="connection-box">
+      <h2>📡 Verbindung herstellen</h2>
+
+      <div>
+        <label for="serverUrlInput">Server-Adresse</label>
+        <input type="text" id="serverUrlInput" placeholder="https://lifeisstrange-production.up.railway.app">
+      </div>
+
+      <div class="conn-buttons">
+        <button id="createRoomBtn">➕ Raum erstellen</button>
+        <button id="joinRoomBtn">🔑 Raum beitreten</button>
+      </div>
+
+      <!-- Raum-Code-Anzeige (nach Erstellung) -->
+      <div class="room-code-display hidden" id="roomCodeDisplay">
+        <p>Dein Raum-Code — teile ihn mit deiner Freundin:</p>
+        <div class="room-code-value" id="roomCodeText">------</div>
+        <div class="room-code-actions">
+          <button id="copyCodeBtn">Kopieren</button>
+          <button id="proceedBtn">Warten &amp; beitreten</button>
+        </div>
+      </div>
+
+      <!-- Code eingeben (als Gast) -->
+      <div class="join-section hidden" id="joinSection">
+        <label for="joinCodeInput">Raum-Code eingeben</label>
+        <input type="text" id="joinCodeInput" placeholder="XXXXXX" maxlength="8">
+        <button id="confirmJoinBtn">Beitreten</button>
+      </div>
+
+      <div id="connectionModalStatus"></div>
     </div>
   </div>
 

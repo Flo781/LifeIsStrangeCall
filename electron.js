@@ -1,23 +1,28 @@
-const { app, BrowserWindow, session, desktopCapturer, ipcMain, systemPreferences, dialog } = require("electron");
-
-// GPU Crash-Fix für Screen Share auf Windows
-app.commandLine.appendSwitch('disable-features', 'WidgetLayering');
-app.commandLine.appendSwitch('disable-gpu-sandbox');
-app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer');
-
+const {
+  app, BrowserWindow, session, desktopCapturer,
+  ipcMain, systemPreferences, dialog, shell
+} = require("electron");
 const path = require("path");
 const { execSync, exec } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 
+// ---- Chromium-Flags für Audio & Screen Share ----
+app.commandLine.appendSwitch("disable-features", "WidgetLayering,AudioServiceSandbox");
+app.commandLine.appendSwitch("disable-gpu-sandbox");
+app.commandLine.appendSwitch("enable-features", "SharedArrayBuffer,WasapiRawAudioCapture");
+app.commandLine.appendSwitch("disable-renderer-backgrounding");
+
 require("./server.js");
 
-let mainWindow;
-let pickerWindow;
+let mainWindow = null;
+let pickerWindow = null;
 
-// ---- BlackHole Hilfsfunktionen ----
-
+// ============================================================
+// Hilfsfunktionen: BlackHole (macOS)
+// ============================================================
 function isBlackHoleInstalled() {
+  if (process.platform !== "darwin") return false;
   try {
     const result = execSync("system_profiler SPAudioDataType 2>/dev/null || true").toString();
     return result.toLowerCase().includes("blackhole");
@@ -28,9 +33,9 @@ function isBlackHoleInstalled() {
 
 function installPkg(pkgPath) {
   return new Promise((resolve, reject) => {
-    const escapedPath = pkgPath.replace(/'/g, "'\\''");
-    const script = `do shell script "installer -pkg '${escapedPath}' -target /" with administrator privileges`;
-    exec(`osascript -e ${JSON.stringify(script)}`, (err, stdout, stderr) => {
+    const escaped = pkgPath.replace(/'/g, "'\\''");
+    const script = `do shell script "installer -pkg '${escaped}' -target /" with administrator privileges`;
+    exec(`osascript -e ${JSON.stringify(script)}`, (err, _stdout, stderr) => {
       if (err) reject(new Error(stderr || err.message));
       else resolve();
     });
@@ -44,16 +49,13 @@ async function installBlackHoleIfNeeded() {
     return;
   }
 
-  console.log("BlackHole nicht gefunden → starte automatische Installation...");
-
   const { response } = await dialog.showMessageBox(mainWindow, {
     type: "info",
     title: "System-Audio einrichten",
     message: "Für System-Audio beim Bildschirm teilen wird BlackHole benötigt.",
-    detail: "BlackHole ist ein kostenloser Audio-Treiber der einmalig installiert wird.\nDu wirst einmalig nach deinem Mac-Passwort gefragt.\n\nDie Installation dauert ca. 10 Sekunden.",
+    detail: "BlackHole ist ein kostenloser Audio-Treiber der einmalig installiert wird.\nDu wirst einmalig nach deinem Mac-Passwort gefragt.",
     buttons: ["Jetzt installieren", "Überspringen"],
-    defaultId: 0,
-    cancelId: 1,
+    defaultId: 0, cancelId: 1,
   });
 
   if (response === 1) return;
@@ -68,7 +70,9 @@ async function installBlackHoleIfNeeded() {
   progressWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(`
     <html><head><meta charset="UTF-8"><style>
       *{margin:0;padding:0;box-sizing:border-box;}
-      body{font-family:'Segoe UI',sans-serif;background:#1a1a2e;color:#e0e0e0;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:12px;}
+      body{font-family:'Segoe UI',sans-serif;background:#1a1a2e;color:#e0e0e0;
+           display:flex;flex-direction:column;align-items:center;justify-content:center;
+           height:100vh;gap:12px;}
       h3{color:#c89b7b;font-size:15px;} p{font-size:12px;color:#aaa;}
       .bar-wrap{width:320px;height:6px;background:#2a2a3e;border-radius:3px;}
       .bar{height:6px;background:#c89b7b;border-radius:3px;animation:load 8s linear forwards;}
@@ -85,7 +89,7 @@ async function installBlackHoleIfNeeded() {
     : path.join(__dirname, "assets", "installers", "BlackHole2ch.pkg");
 
   try {
-    if (!fs.existsSync(bundledPkg)) throw new Error("BlackHole2ch.pkg nicht im App-Bundle gefunden.");
+    if (!fs.existsSync(bundledPkg)) throw new Error("BlackHole2ch.pkg nicht gefunden.");
     await installPkg(bundledPkg);
     if (!progressWin.isDestroyed()) progressWin.close();
     await dialog.showMessageBox(mainWindow, {
@@ -105,8 +109,26 @@ async function installBlackHoleIfNeeded() {
   }
 }
 
-// ---- Hauptfenster ----
+// ============================================================
+// Lokale IP-Adressen ermitteln (für IPC)
+// ============================================================
+function getLocalIPs() {
+  const ips = [];
+  for (const ifaces of Object.values(os.networkInterfaces())) {
+    for (const addr of ifaces) {
+      if (addr.family === "IPv4" && !addr.internal) {
+        ips.push(addr.address);
+      }
+    }
+  }
+  return ips;
+}
 
+ipcMain.handle("get-local-ips", () => getLocalIPs());
+
+// ============================================================
+// Hauptfenster erstellen
+// ============================================================
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400, height: 900, minWidth: 900, minHeight: 600,
@@ -117,20 +139,18 @@ function createWindow() {
       nodeIntegration: true,
       webSecurity: false,
       backgroundThrottling: false,
-      offscreen: false,
     },
     backgroundColor: "#1a1a2e",
     show: false,
   });
 
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    callback(true);
-  });
+  // Alle Berechtigungen erlauben (Mikrofon, Screen, etc.)
+  session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(true));
   session.defaultSession.setPermissionCheckHandler(() => true);
 
-  // ---- Display Media Request Handler (Electron 34+ Fix für Screen Share) ----
-  // Renderer ruft getDisplayMedia() auf → Main-Prozess zeigt Picker und liefert Source
-  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+  // ---- Screen Share Handler (Electron 34+) ----
+  // Renderers rufen getDisplayMedia() auf → dieser Handler fängt es ab
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     try {
       const sources = await desktopCapturer.getSources({
         types: ["screen", "window"],
@@ -141,22 +161,21 @@ function createWindow() {
       const blackHoleInstalled = isBlackHoleInstalled();
 
       openPickerWindow(sources, blackHoleInstalled, (result) => {
-        if (!result) {
-          callback({});
-          return;
-        }
+        if (!result) { callback({}); return; }
 
         const selectedSource = sources.find(s => s.id === result.sourceId);
-        if (!selectedSource) {
-          callback({});
-          return;
-        }
+        if (!selectedSource) { callback({}); return; }
 
-        // Electron erwartet: callback({ video: source }) oder callback({ video: source, audio: 'loopback' })
         const response = { video: selectedSource };
+
+        // Windows: Loopback-Audio (System-Sound wird mitübertragen)
         if (result.withAudio && process.platform === "win32") {
           response.audio = "loopback";
+          console.log("Screen Share: Windows Loopback-Audio aktiviert ✓");
         }
+        // macOS: BlackHole wird als separates Mikrofon im Renderer verwendet
+        // (BlackHole-DeviceId wird vom Picker mitgegeben)
+
         callback(response);
       });
     } catch (err) {
@@ -169,9 +188,8 @@ function createWindow() {
     systemPreferences.getMediaAccessStatus("screen");
   }
 
-  setTimeout(() => {
-    mainWindow.loadURL("http://localhost:3000");
-  }, 1500);
+  // 1,5s warten bis Server gestartet ist
+  setTimeout(() => mainWindow.loadURL("http://localhost:3000"), 1500);
 
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
@@ -179,31 +197,26 @@ function createWindow() {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    require("electron").shell.openExternal(url);
+    shell.openExternal(url);
     return { action: "deny" };
   });
 
-  // Crash-Handler: Renderer abgestürzt → Fenster neu laden statt App schließen
-  mainWindow.webContents.on("render-process-gone", (event, details) => {
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
     console.error("⚠️ Renderer abgestürzt!", details.reason, details.exitCode);
-    dialog.showMessageBox({ type: "error", title: "Renderer Crash", message: "Renderer abgestürzt: " + details.reason + " (Code: " + details.exitCode + ")\nApp wird neu geladen..." }).then(() => {
+    dialog.showMessageBox({
+      type: "error", title: "Renderer Crash",
+      message: `Renderer abgestürzt: ${details.reason} (Code: ${details.exitCode})\nApp wird neu geladen...`
+    }).then(() => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.loadURL("http://localhost:3000");
       }
     });
   });
-
-  mainWindow.webContents.on("crashed", (event) => {
-    console.error("⚠️ WebContents crashed!");
-  });
 }
 
-// ---- IPC: Screen Share Picker (wird jetzt über setDisplayMediaRequestHandler gesteuert) ----
-// Der alte open-screen-picker IPC wurde durch setDisplayMediaRequestHandler ersetzt.
-// Der Renderer nutzt jetzt navigator.mediaDevices.getDisplayMedia() direkt.
-
-// ---- Screen Share Picker Fenster ----
-
+// ============================================================
+// Screen-Share-Picker-Fenster
+// ============================================================
 function openPickerWindow(sources, blackHoleInstalled, onResult) {
   if (pickerWindow && !pickerWindow.isDestroyed()) pickerWindow.destroy();
 
@@ -211,17 +224,15 @@ function openPickerWindow(sources, blackHoleInstalled, onResult) {
   const isWin = process.platform === "win32";
 
   pickerWindow = new BrowserWindow({
-    width: 800, height: 620,
+    width: 820, height: 640,
     title: "Bildschirm oder Fenster wählen",
     resizable: false, minimizable: false, maximizable: false,
     modal: true, parent: mainWindow,
     webPreferences: { contextIsolation: false, nodeIntegration: true },
     backgroundColor: "#1a1a2e",
   });
-
   pickerWindow.setMenu(null);
 
-  // Alte Listener immer zuerst entfernen
   ipcMain.removeAllListeners("picker-selected");
   ipcMain.removeAllListeners("picker-cancelled");
 
@@ -232,57 +243,65 @@ function openPickerWindow(sources, blackHoleInstalled, onResult) {
     isScreen: s.id.startsWith("screen:"),
   })));
 
-  const macAudioHint = isMac ? `
-    <div id="macAudioHint" style="margin-top:8px;padding:10px 14px;background:#16213e;
-      border-left:3px solid #c89b7b;border-radius:6px;font-size:12px;color:#bbb;line-height:1.6;">
-      <span id="audioHintText">${blackHoleInstalled
-        ? "✅ BlackHole erkannt — System-Audio wird übertragen!"
-        : "⚠️ BlackHole nicht gefunden — kein System-Audio auf Mac möglich."
-      }</span>
-    </div>` : "";
+  const audioHintHtml = isMac
+    ? `<div style="margin-top:8px;padding:10px 14px;background:#16213e;
+         border-left:3px solid ${blackHoleInstalled ? "#4caf50" : "#e57373"};
+         border-radius:6px;font-size:12px;color:#bbb;line-height:1.6;">
+         ${blackHoleInstalled
+           ? "✅ BlackHole erkannt — System-Audio wird übertragen!"
+           : "⚠️ BlackHole nicht gefunden — kein System-Audio auf Mac möglich."}
+       </div>`
+    : isWin
+    ? `<div style="margin-top:8px;padding:10px 14px;background:#16213e;
+         border-left:3px solid #4caf50;border-radius:6px;font-size:12px;color:#bbb;">
+         ✅ Windows: System-Audio wird automatisch mitübertragen
+       </div>`
+    : "";
 
-  const winAudioHint = isWin ? `
-    <div style="margin-top:8px;padding:10px 14px;background:#16213e;
-      border-left:3px solid #4caf50;border-radius:6px;font-size:12px;color:#bbb;line-height:1.6;">
-      ✅ Windows: System-Audio wird automatisch mitübertragen
-    </div>` : "";
-
-  const pickerHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
     *{margin:0;padding:0;box-sizing:border-box;}
-    body{font-family:'Segoe UI',sans-serif;background:#1a1a2e;color:#e0e0e0;padding:20px;user-select:none;}
-    h2{font-size:16px;margin-bottom:6px;color:#c89b7b;}
-    .subtitle{font-size:12px;color:#888;margin-bottom:14px;}
-    .section-title{font-size:11px;text-transform:uppercase;color:#888;letter-spacing:1px;margin:14px 0 8px;}
-    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;max-height:220px;overflow-y:auto;padding-right:4px;}
-    .grid::-webkit-scrollbar{width:6px;} .grid::-webkit-scrollbar-track{background:#0d0d1a;}
+    body{font-family:'Segoe UI',sans-serif;background:#1a1a2e;color:#e0e0e0;
+         padding:20px;user-select:none;}
+    h2{font-size:16px;margin-bottom:4px;color:#c89b7b;}
+    .sub{font-size:12px;color:#888;margin-bottom:14px;}
+    .sec{font-size:11px;text-transform:uppercase;color:#888;letter-spacing:1px;margin:14px 0 8px;}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));
+          gap:10px;max-height:220px;overflow-y:auto;padding-right:4px;}
+    .grid::-webkit-scrollbar{width:6px;}
+    .grid::-webkit-scrollbar-track{background:#0d0d1a;}
     .grid::-webkit-scrollbar-thumb{background:#c89b7b55;border-radius:3px;}
-    .source{background:#16213e;border:2px solid transparent;border-radius:10px;padding:8px;cursor:pointer;transition:all 0.15s;text-align:center;}
-    .source:hover{border-color:#c89b7b88;background:#1e2d4d;}
-    .source.selected{border-color:#c89b7b;background:#1e2d4d;}
-    .source img{width:100%;height:90px;object-fit:cover;border-radius:6px;background:#0d0d1a;}
-    .source .name{font-size:11px;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#ccc;}
-    .audio-row{margin-top:12px;display:flex;align-items:center;gap:10px;font-size:13px;color:#ccc;}
-    .audio-row input[type=checkbox]{width:16px;height:16px;accent-color:#c89b7b;cursor:pointer;}
-    .buttons{margin-top:14px;display:flex;justify-content:flex-end;gap:10px;}
-    button{padding:8px 20px;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit;}
-    #cancelBtn{background:#2a2a3e;color:#aaa;} #cancelBtn:hover{background:#333355;}
-    #shareBtn{background:#c89b7b;color:#1a1a2e;font-weight:bold;} #shareBtn:hover{background:#d4aa8a;}
-    #shareBtn:disabled{background:#555;color:#888;cursor:not-allowed;}
+    .src{background:#16213e;border:2px solid transparent;border-radius:10px;
+         padding:8px;cursor:pointer;transition:all 0.15s;text-align:center;}
+    .src:hover{border-color:#c89b7b88;background:#1e2d4d;}
+    .src.sel{border-color:#c89b7b;background:#1e2d4d;}
+    .src img{width:100%;height:90px;object-fit:cover;border-radius:6px;background:#0d0d1a;}
+    .src .nm{font-size:11px;margin-top:6px;overflow:hidden;text-overflow:ellipsis;
+             white-space:nowrap;color:#ccc;}
     .empty{color:#555;font-size:12px;padding:8px 0;}
+    .audio-row{margin-top:12px;display:flex;align-items:center;gap:10px;
+               font-size:13px;color:#ccc;}
+    .audio-row input[type=checkbox]{width:16px;height:16px;accent-color:#c89b7b;cursor:pointer;}
+    .btns{margin-top:14px;display:flex;justify-content:flex-end;gap:10px;}
+    button{padding:8px 20px;border:none;border-radius:8px;font-size:13px;
+           cursor:pointer;font-family:inherit;}
+    #cancelBtn{background:#2a2a3e;color:#aaa;}
+    #cancelBtn:hover{background:#333355;}
+    #shareBtn{background:#c89b7b;color:#1a1a2e;font-weight:bold;}
+    #shareBtn:hover{background:#d4aa8a;}
+    #shareBtn:disabled{background:#555;color:#888;cursor:not-allowed;}
   </style></head><body>
   <h2>🖥️ Bildschirm oder Fenster teilen</h2>
-  <p class="subtitle">Wähle was du teilen möchtest</p>
-  <div class="section-title">Bildschirme</div>
+  <p class="sub">Wähle was du teilen möchtest</p>
+  <div class="sec">Bildschirme</div>
   <div class="grid" id="screenGrid"></div>
-  <div class="section-title">Fenster / Anwendungen</div>
+  <div class="sec">Fenster / Anwendungen</div>
   <div class="grid" id="windowGrid"></div>
   <div class="audio-row">
     <input type="checkbox" id="audioCheck" ${isWin ? "checked" : ""}>
     <label for="audioCheck">System-Audio mitübertragen</label>
   </div>
-  ${macAudioHint}
-  ${winAudioHint}
-  <div class="buttons">
+  ${audioHintHtml}
+  <div class="btns">
     <button id="cancelBtn">Abbrechen</button>
     <button id="shareBtn" disabled>Teilen</button>
   </div>
@@ -290,55 +309,36 @@ function openPickerWindow(sources, blackHoleInstalled, onResult) {
     const { ipcRenderer } = require('electron');
     const sources = ${sourcesJson};
     const isMac = ${isMac};
-    const isWin = ${isWin};
     let selectedId = null;
     let blackHoleDeviceId = null;
 
-    async function checkBlackHole() {
-      if (!isMac) return;
-      const audioCheck = document.getElementById('audioCheck');
-      const hint = document.getElementById('audioHintText');
-      if (!hint) return;
-      try {
-        await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {});
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const bh = devices.find(d => d.kind === 'audioinput' && d.label.toLowerCase().includes('blackhole'));
-        if (bh) {
-          blackHoleDeviceId = bh.deviceId;
-          audioCheck.checked = true;
-          audioCheck.disabled = false;
-          hint.innerHTML = '✅ BlackHole erkannt — System-Audio wird übertragen!';
-          hint.parentElement.style.borderColor = '#4caf50';
-        } else {
-          audioCheck.checked = false;
-          audioCheck.disabled = true;
-          hint.innerHTML = '⚠️ BlackHole nicht gefunden — kein System-Audio möglich.';
-          hint.parentElement.style.borderColor = '#e57373';
-        }
-      } catch(e) {
-        hint.innerHTML = '⚠️ Audio-Geräte konnten nicht geprüft werden.';
-      }
+    if (isMac && ${blackHoleInstalled}) {
+      // BlackHole-Device-ID im Renderer suchen
+      navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {});
+      navigator.mediaDevices.enumerateDevices().then(devs => {
+        const bh = devs.find(d => d.kind === 'audioinput' && d.label.toLowerCase().includes('blackhole'));
+        if (bh) blackHoleDeviceId = bh.deviceId;
+      }).catch(() => {});
     }
 
-    function renderSources() {
-      const screenGrid = document.getElementById('screenGrid');
-      const windowGrid = document.getElementById('windowGrid');
-      const screens = sources.filter(s => s.isScreen);
-      const windows = sources.filter(s => !s.isScreen);
-      if (!screens.length) screenGrid.innerHTML = '<p class="empty">Keine Bildschirme gefunden</p>';
-      screens.forEach(s => screenGrid.appendChild(createCard(s)));
-      if (!windows.length) windowGrid.innerHTML = '<p class="empty">Keine Fenster gefunden</p>';
-      windows.forEach(s => windowGrid.appendChild(createCard(s)));
-    }
+    const screenGrid = document.getElementById('screenGrid');
+    const windowGrid = document.getElementById('windowGrid');
+    const screens = sources.filter(s => s.isScreen);
+    const windows = sources.filter(s => !s.isScreen);
 
-    function createCard(s) {
+    if (!screens.length) screenGrid.innerHTML = '<p class="empty">Keine Bildschirme gefunden</p>';
+    screens.forEach(s => screenGrid.appendChild(card(s)));
+    if (!windows.length) windowGrid.innerHTML = '<p class="empty">Keine Fenster gefunden</p>';
+    windows.forEach(s => windowGrid.appendChild(card(s)));
+
+    function card(s) {
       const div = document.createElement('div');
-      div.className = 'source';
+      div.className = 'src';
       div.innerHTML = \`<img src="\${s.thumbnail}" onerror="this.style.background='#0d0d1a'">
-        <div class="name" title="\${s.name}">\${s.name}</div>\`;
+        <div class="nm" title="\${s.name}">\${s.name}</div>\`;
       div.onclick = () => {
-        document.querySelectorAll('.source').forEach(el => el.classList.remove('selected'));
-        div.classList.add('selected');
+        document.querySelectorAll('.src').forEach(el => el.classList.remove('sel'));
+        div.classList.add('sel');
         selectedId = s.id;
         document.getElementById('shareBtn').disabled = false;
       };
@@ -357,16 +357,14 @@ function openPickerWindow(sources, blackHoleInstalled, onResult) {
 
     document.getElementById('shareBtn').onclick = share;
     document.getElementById('cancelBtn').onclick = () => ipcRenderer.send('picker-cancelled');
-    renderSources();
-    checkBlackHole();
   <\/script></body></html>`;
 
-  pickerWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(pickerHTML));
+  pickerWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
 
-  ipcMain.once("picker-selected", (event, data) => {
+  ipcMain.once("picker-selected", (_event, data) => {
     if (pickerWindow && !pickerWindow.isDestroyed()) pickerWindow.close();
     pickerWindow = null;
-    onResult(data); // { sourceId, withAudio, blackHoleDeviceId }
+    onResult(data);
   });
 
   ipcMain.once("picker-cancelled", () => {
@@ -375,29 +373,30 @@ function openPickerWindow(sources, blackHoleInstalled, onResult) {
     onResult(null);
   });
 
-  pickerWindow.on("closed", () => {
-    pickerWindow = null;
-  });
+  pickerWindow.on("closed", () => { pickerWindow = null; });
 }
 
-// ---- IPC: Audio-Geräte ----
-ipcMain.handle("get-audio-devices", async () => true);
-
-// ---- App Start ----
-
+// ============================================================
+// Quarantine entfernen (macOS)
+// ============================================================
 function removeSelfQuarantine() {
   if (process.platform !== "darwin") return;
   try {
     const appPath = app.getPath("exe").split(".app/")[0] + ".app";
     execSync(`xattr -rd com.apple.quarantine "${appPath}" 2>/dev/null || true`);
-    console.log("Quarantine entfernt ✓");
-  } catch (e) {}
+  } catch (e) { /* ignore */ }
 }
 
+// ============================================================
+// Globaler Fehler-Handler
+// ============================================================
 process.on("uncaughtException", (err) => {
-  console.error("⚠️ Uncaught Exception im Main-Prozess:", err);
+  console.error("⚠️ Uncaught Exception:", err);
 });
 
+// ============================================================
+// App-Start
+// ============================================================
 app.whenReady().then(() => {
   removeSelfQuarantine();
   createWindow();
