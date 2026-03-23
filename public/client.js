@@ -989,6 +989,11 @@ screenBtn.onclick = async () => {
 
     if (!gotAudio) {
       addSystemMessage("⚠️ System-Audio nicht verfügbar — nur Video wird übertragen");
+    } else {
+      // Loopback aktiv: Remote-Audio stummschalten damit der Loopback es nicht aufnimmt
+      // (verhindert dass die andere Person sich selbst als Echo hört)
+      userAudioElements.forEach(el => { el.muted = true; });
+      addSystemMessage("🔇 Call-Audio stummgeschaltet während Bildschirmübertragung (verhindert Echo)");
     }
 
     // KERNFIX: Stream-ID VOR der Renegotiation an Gegenseite senden
@@ -1080,6 +1085,10 @@ function stopScreenShare() {
   removeVideoContainer(id);
   socket?.emit("screen-share-stopped");
   expectedScreenStreamId = null;
+
+  // Remote-Audio wieder unmuten
+  userAudioElements.forEach(el => { el.muted = false; });
+
   screenBtn.style.display = "flex";
   stopScreenBtn.style.display = "none";
 }

@@ -254,8 +254,10 @@ function openPickerWindow(sources, blackHoleInstalled, onResult) {
        </div>`
     : isWin
     ? `<div style="margin-top:8px;padding:10px 14px;background:#16213e;
-         border-left:3px solid #4caf50;border-radius:6px;font-size:12px;color:#bbb;">
-         ✅ Windows: System-Audio wird automatisch mitübertragen
+         border-left:3px solid #e5a823;border-radius:6px;font-size:12px;color:#bbb;line-height:1.6;">
+         ⚠️ System-Audio überträgt ALLES was aus deinen Lautsprechern kommt — auch die Stimme deines Gesprächspartners.<br>
+         Das führt dazu, dass sie sich selbst als Echo hören.<br>
+         <strong style="color:#c89b7b;">Lösung: Kopfhörer verwenden</strong> oder System-Audio deaktivieren.
        </div>`
     : "";
 
@@ -298,7 +300,7 @@ function openPickerWindow(sources, blackHoleInstalled, onResult) {
   <div class="sec">Fenster / Anwendungen</div>
   <div class="grid" id="windowGrid"></div>
   <div class="audio-row">
-    <input type="checkbox" id="audioCheck" ${isWin ? "checked" : ""}>
+    <input type="checkbox" id="audioCheck">
     <label for="audioCheck">System-Audio mitübertragen</label>
   </div>
   ${audioHintHtml}
