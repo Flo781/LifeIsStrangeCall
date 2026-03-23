@@ -36,6 +36,10 @@ let expectedScreenStreamId = null;
 // Streams die ankamen bevor ein User-Tile existiert
 let pendingAudioStreams = [];
 
+// Flag: User hat "Verbinden" geklickt und möchte dem Call beitreten
+let shouldJoinCall = false;
+let callJoinTimeout = null;
+
 // ---- Qualitäts-Presets ----
 const qualityPresets = {
   low:    { width: 1280, height: 720,  fps: 30, bitrate: 2500000,  label: "SD" },
@@ -176,9 +180,21 @@ function connectSocket(url) {
     console.log("✓ Socket.IO verbunden:", socket.id);
     setConnectionModalStatus("Verbunden ✓ — trete Call bei...", "green");
 
-    // Nach Reconnect automatisch wieder beitreten
-    if (username && peerReady) {
+    // Flag gesetzt → connect-to-call senden (egal ob erster Connect oder Reconnect)
+    if (shouldJoinCall && username) {
       socket.emit("connect-to-call", { username, profilePic: userProfilePic });
+
+      // Timeout: wenn nach 6s kein call-joined kommt → Fehlermeldung
+      if (callJoinTimeout) clearTimeout(callJoinTimeout);
+      callJoinTimeout = setTimeout(() => {
+        if (shouldJoinCall) {
+          setConnectionModalStatus(
+            "Keine Antwort vom Server. Bitte Railway neu deployen oder Server-URL prüfen.",
+            "red"
+          );
+          if (connectBtn) { connectBtn.disabled = false; connectBtn.textContent = "Erneut versuchen"; }
+        }
+      }, 6000);
     }
   });
 
@@ -197,6 +213,8 @@ function connectSocket(url) {
 
   // ---- Call-Events ----
   socket.on("call-joined", ({ users, isFirst: first }) => {
+    shouldJoinCall = false;
+    if (callJoinTimeout) { clearTimeout(callJoinTimeout); callJoinTimeout = null; }
     isFirst = first;
     console.log("Call beigetreten, isFirst:", isFirst, "Users:", users.length);
     closeConnectionModal();
@@ -302,10 +320,8 @@ if (connectBtn) {
     connectBtn.textContent = "Verbinde...";
     setConnectionModalStatus("Verbinde mit Server...", "orange");
 
+    shouldJoinCall = true;
     connectSocket(url);
-    socket.once("connect", () => {
-      socket.emit("connect-to-call", { username, profilePic: userProfilePic });
-    });
   };
 }
 
@@ -1083,6 +1099,8 @@ function cleanup() {
   isNegotiating = false;
   expectedScreenStreamId = null;
   peerReady = false;
+  shouldJoinCall = false;
+  if (callJoinTimeout) { clearTimeout(callJoinTimeout); callJoinTimeout = null; }
 
   removeUserTile(socket?.id || "");
   videoGrid.querySelectorAll(".user-tile").forEach(el => el.remove());
