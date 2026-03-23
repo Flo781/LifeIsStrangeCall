@@ -357,10 +357,15 @@ async function startCall(users) {
         echoCancellation: true,
         googEchoCancellation: true,
         googEchoCancellation2: true,
+        googDAEchoCancellation: true,   // Delay-agnostisches AEC (hilft bei Software-Loopback)
+        googAutoGainControl: false,
+        googAutoGainControl2: false,
+        googNoiseSuppression: true,
+        googHighpassFilter: true,
         noiseSuppression: true,
         autoGainControl: false,
         sampleRate: 48000,
-        channelCount: 1,   // Mono: AEC funktioniert mit Stereo weniger zuverlässig
+        channelCount: 1,
         ...(selectedInputDeviceId ? { deviceId: { exact: selectedInputDeviceId } } : {})
       }
     });
