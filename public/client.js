@@ -81,15 +81,15 @@ function escapeHtml(text) {
 }
 
 function optimizeAudioSDP(sdp) {
-  // Opus auf beste Qualität setzen
+  // Opus optimieren — kein Stereo (stört Echo-Cancellation)
   return sdp
     .replace(
       /a=fmtp:111 minptime=10;useinbandfec=1/g,
-      "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;maxaveragebitrate=510000;maxplaybackrate=48000"
+      "a=fmtp:111 minptime=10;useinbandfec=1;maxaveragebitrate=510000;maxplaybackrate=48000"
     )
     .replace(
       /a=fmtp:111 minptime=10\n/g,
-      "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;maxaveragebitrate=510000;maxplaybackrate=48000\n"
+      "a=fmtp:111 minptime=10;useinbandfec=1;maxaveragebitrate=510000;maxplaybackrate=48000\n"
     );
 }
 
@@ -355,10 +355,12 @@ async function startCall(users) {
     localStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
+        googEchoCancellation: true,
+        googEchoCancellation2: true,
         noiseSuppression: true,
-        autoGainControl: true,
+        autoGainControl: false,
         sampleRate: 48000,
-        channelCount: 2,
+        channelCount: 1,   // Mono: AEC funktioniert mit Stereo weniger zuverlässig
         ...(selectedInputDeviceId ? { deviceId: { exact: selectedInputDeviceId } } : {})
       }
     });
@@ -593,10 +595,12 @@ async function handleSignal(data) {
         localStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
+            googEchoCancellation: true,
+            googEchoCancellation2: true,
             noiseSuppression: true,
-            autoGainControl: true,
+            autoGainControl: false,
             sampleRate: 48000,
-            channelCount: 2
+            channelCount: 1
           }
         });
         localStream.getTracks().forEach(track => {
@@ -1350,7 +1354,7 @@ audioDeviceApply.onclick = async () => {
     selectedInputDeviceId = newIn;
     try {
       const ns = await navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: { exact: newIn }, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        audio: { deviceId: { exact: newIn }, echoCancellation: true, googEchoCancellation: true, googEchoCancellation2: true, noiseSuppression: true, autoGainControl: false, channelCount: 1 }
       });
       const newTrack = ns.getAudioTracks()[0];
       if (localStream) {
