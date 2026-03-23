@@ -1064,11 +1064,21 @@ stopScreenBtn.onclick = () => stopScreenShare();
 
 function stopScreenShare() {
   if (!screenStream) return;
-  const id = screenStream.id;
-  screenStream.getTracks().forEach(t => t.stop());
+  const stream = screenStream;
+  screenStream = null;  // sofort auf null setzen damit doppelte Aufrufe ignoriert werden
+
+  const id = stream.id;
+
+  // Tracks aus PeerConnection entfernen
+  if (peerConnection) {
+    peerConnection.getSenders()
+      .filter(s => s.track && stream.getTracks().includes(s.track))
+      .forEach(s => { try { peerConnection.removeTrack(s); } catch (e) { /* ignore */ } });
+  }
+
+  stream.getTracks().forEach(t => t.stop());
   removeVideoContainer(id);
   socket?.emit("screen-share-stopped");
-  screenStream = null;
   expectedScreenStreamId = null;
   screenBtn.style.display = "flex";
   stopScreenBtn.style.display = "none";

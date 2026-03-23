@@ -8,10 +8,11 @@ const fs = require("fs");
 const os = require("os");
 
 // ---- Chromium-Flags für Audio & Screen Share ----
-app.commandLine.appendSwitch("disable-features", "WidgetLayering,AudioServiceSandbox");
+app.commandLine.appendSwitch("disable-features", "WidgetLayering,AudioServiceSandbox,WasapiRawAudioCapture");
 app.commandLine.appendSwitch("disable-gpu-sandbox");
-app.commandLine.appendSwitch("enable-features", "SharedArrayBuffer,WasapiRawAudioCapture");
+app.commandLine.appendSwitch("enable-features", "SharedArrayBuffer");
 app.commandLine.appendSwitch("disable-renderer-backgrounding");
+// WasapiRawAudioCapture deaktiviert weil es mit bestimmten NVIDIA-Treibern keinen Ton liefert
 
 require("./server.js");
 
