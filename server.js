@@ -98,6 +98,15 @@ app.get("/api/killer-queue", async (req, res) => {
   }
 });
 
+// ---- Status API (Debug) ----
+app.get("/api/status", (_req, res) => {
+  res.json({
+    version: "1.4.0",
+    waitingRoom: waitingRoom.users.size,
+    users: Array.from(waitingRoom.users.values()).map(u => u.username)
+  });
+});
+
 // ---- Socket.IO ----
 io.on("connection", (socket) => {
   console.log("✓ Verbunden:", socket.id);
