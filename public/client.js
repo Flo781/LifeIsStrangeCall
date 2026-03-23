@@ -454,7 +454,16 @@ async function createPeerConnection() {
   // ---- ontrack: Remote-Streams empfangen ----
   peerConnection.ontrack = (event) => {
     const track = event.track;
-    const stream = event.streams?.[0] || new MediaStream([track]);
+    const stream = event.streams?.[0];
+
+    // Kein Stream → ignorieren (sollte nicht passieren)
+    if (!stream) return;
+
+    // Eigenen lokalen Stream nie abspielen (verhindert Selbst-Echo)
+    if (stream.id === localStream?.id) {
+      console.warn("ontrack: eigener lokaler Stream empfangen — ignoriert");
+      return;
+    }
 
     console.log(`ontrack: kind=${track.kind} streamId=${stream.id}`);
 
@@ -517,6 +526,12 @@ function handleRemoteVideoTrack(track, stream) {
 // Kernfix: Stream-ID vs. expectedScreenStreamId prüfen
 // ============================================================
 function handleRemoteAudioTrack(track, stream) {
+  // Niemals eigenen lokalen Stream abspielen
+  if (stream.id === localStream?.id || stream.id === screenStream?.id) {
+    console.warn("handleRemoteAudioTrack: lokaler Stream — ignoriert");
+    return;
+  }
+
   // Fall 1: Stream ist als Screen-Share bekannt (Video kam zuerst)
   if (remoteScreenStreams.has(stream.id)) {
     const entry = remoteScreenStreams.get(stream.id);
