@@ -1,0 +1,63 @@
+name: Build & Release Windows EXE
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # Manueller Start jederzeit möglich
+
+permissions:
+  contents: write    # Nötig für Release erstellen / updaten
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Code auschecken
+        uses: actions/checkout@v4
+
+      - name: Node.js einrichten
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Abhängigkeiten installieren
+        run: npm ci
+
+      - name: Windows EXE bauen
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          WIN_CSC_LINK: ""
+        run: npm run build:win
+
+      - name: EXE-Datei finden
+        id: find_exe
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path dist -Filter "*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          echo "exe_path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          echo "exe_name=$($exe.Name)" >> $env:GITHUB_OUTPUT
+          Write-Host "Gefunden: $($exe.FullName)"
+
+      - name: GitHub Release erstellen / aktualisieren
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "LifeIsStrangeCall — Neueste Version"
+          body: |
+            ## LifeIsStrangeCall v1.3.0
+
+            ### Was ist neu:
+            - **Raum-Code-System**: Erstelle einen Raum und teile den 6-stelligen Code
+            - **Screen Share Audio Fix**: System-Ton wird jetzt zuverlässig übertragen
+            - **Stabile Verbindung**: Kein Signal-Chaos mehr, saubere Reconnection
+
+            ### Installation:
+            1. EXE herunterladen und ausführen
+            2. App starten → Profil wählen → Raum erstellen oder beitreten
+
+            > ⚠️ Windows Defender warnt möglicherweise weil die App nicht signiert ist — das ist normal. "Trotzdem ausführen" klicken.
+          files: ${{ steps.find_exe.outputs.exe_path }}
+          make_latest: true
+          prerelease: false
