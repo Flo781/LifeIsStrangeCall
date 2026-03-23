@@ -10,9 +10,8 @@ const DEFAULT_SERVER_URL = "https://lifeisstrange-production.up.railway.app";
 // Socket.IO-Verbindung wird erst nach Modal-Bestätigung aufgebaut.
 let socket = null;
 let currentServerUrl = localStorage.getItem("serverUrl") || DEFAULT_SERVER_URL;
-let currentRoomCode = null;
-let isHost = false;          // Hat dieser Client den Raum erstellt?
-let peerReady = false;       // Ist der andere User bereits im Raum?
+let isFirst = false;         // true = erste Person im Call (sendet das Offer)
+let peerReady = false;       // Ist der andere User bereits verbunden?
 
 // ---- WebRTC Zustand ----
 let localStream = null;
@@ -148,15 +147,7 @@ const audioDeviceCancel   = document.getElementById("audioDeviceCancel");
 // Verbindungs-Modal
 const connectionModal  = document.getElementById("connectionModal");
 const serverUrlInput   = document.getElementById("serverUrlInput");
-const createRoomBtn    = document.getElementById("createRoomBtn");
-const joinRoomBtn      = document.getElementById("joinRoomBtn");
-const roomCodeDisplay  = document.getElementById("roomCodeDisplay");
-const roomCodeText     = document.getElementById("roomCodeText");
-const copyCodeBtn      = document.getElementById("copyCodeBtn");
-const proceedBtn       = document.getElementById("proceedBtn");
-const joinSection      = document.getElementById("joinSection");
-const joinCodeInput    = document.getElementById("joinCodeInput");
-const confirmJoinBtn   = document.getElementById("confirmJoinBtn");
+const connectBtn       = document.getElementById("connectBtn");
 const connectionStatus = document.getElementById("connectionModalStatus");
 
 let selectedInputDeviceId  = null;
@@ -183,26 +174,11 @@ function connectSocket(url) {
 
   socket.on("connect", () => {
     console.log("✓ Socket.IO verbunden:", socket.id);
-    setConnectionModalStatus("Verbunden mit Server ✓", "green");
+    setConnectionModalStatus("Verbunden ✓ — trete Call bei...", "green");
 
-    // Nach Reconnect: Raum wieder beitreten falls wir einen hatten
-    if (currentRoomCode && username) {
-      console.log("Reconnect: Rejoining room", currentRoomCode);
-      if (isHost) {
-        // Host kann den Raum nicht neu erstellen (Code wäre anders),
-        // daher einfach als Gast re-joinen falls der Raum noch existiert
-        socket.emit("join-room", {
-          roomCode: currentRoomCode,
-          username,
-          profilePic: userProfilePic
-        });
-      } else {
-        socket.emit("join-room", {
-          roomCode: currentRoomCode,
-          username,
-          profilePic: userProfilePic
-        });
-      }
+    // Nach Reconnect automatisch wieder beitreten
+    if (username && peerReady) {
+      socket.emit("connect-to-call", { username, profilePic: userProfilePic });
     }
   });
 
@@ -219,49 +195,40 @@ function connectSocket(url) {
     setConnectionModalStatus("Verbindungsfehler: " + err.message, "red");
   });
 
-  // ---- Raum-Events ----
-  socket.on("room-created", ({ roomCode }) => {
-    currentRoomCode = roomCode;
-    isHost = true;
-    showRoomCode(roomCode);
-    setConnectionModalStatus("Warte auf Gesprächspartner...", "orange");
-  });
-
-  socket.on("room-joined", ({ roomCode, users }) => {
-    currentRoomCode = roomCode;
-    isHost = false;
-    console.log("Raum beigetreten:", roomCode, "Users:", users);
-    // Raum-Modal schließen und direkt in den Call
+  // ---- Call-Events ----
+  socket.on("call-joined", ({ users, isFirst: first }) => {
+    isFirst = first;
+    console.log("Call beigetreten, isFirst:", isFirst, "Users:", users.length);
     closeConnectionModal();
-    startCall(users);
+
+    if (users.length === 1) {
+      // Erste Person — warte auf die andere
+      startCall(users);
+      setConnectionModalStatus("Warte auf Gesprächspartner...", "orange");
+      addSystemMessage("⏳ Warte auf Gesprächspartnerin...");
+    } else {
+      // Zweite Person — beide direkt starten
+      startCall(users);
+    }
   });
 
-  socket.on("room-error", ({ message }) => {
+  socket.on("call-error", ({ message }) => {
     setConnectionModalStatus("Fehler: " + message, "red");
-    confirmJoinBtn.disabled = false;
-    confirmJoinBtn.textContent = "Beitreten";
+    if (connectBtn) { connectBtn.disabled = false; connectBtn.textContent = "Verbinden"; }
   });
 
   socket.on("peer-joined", ({ id, username: peerName, profilePic }) => {
     console.log("Gegenseite beigetreten:", peerName);
     peerReady = true;
 
-    if (connectionModal && !connectionModal.classList.contains("hidden")) {
-      // Host ist noch im Modal → Call starten
-      closeConnectionModal();
-      startCall([
-        { id: socket.id, username, profilePic: userProfilePic },
-        { id, username: peerName, profilePic }
-      ]);
-    } else if (peerConnection) {
-      // Wir sind schon im Call → User-Tile erstellen
+    if (peerConnection) {
       createUserTile(id, peerName, false, profilePic);
       addSystemMessage(`${peerName} ist beigetreten`);
       playTone([440, 660]);
     }
 
-    // Host sendet das erste Offer
-    if (isHost && peerConnection) {
+    // Erste Person sendet das Offer
+    if (isFirst && peerConnection) {
       sendOffer();
     }
   });
@@ -321,9 +288,9 @@ function closeConnectionModal() {
   if (connectionModal) connectionModal.classList.add("hidden");
 }
 
-// "Raum erstellen"-Button
-if (createRoomBtn) {
-  createRoomBtn.onclick = () => {
+// "Verbinden"-Button
+if (connectBtn) {
+  connectBtn.onclick = () => {
     if (!username) {
       setConnectionModalStatus("Bitte zuerst ein Profil wählen.", "red");
       return;
@@ -331,77 +298,14 @@ if (createRoomBtn) {
     const url = (serverUrlInput?.value?.trim()) || DEFAULT_SERVER_URL;
     currentServerUrl = url;
     localStorage.setItem("serverUrl", url);
+    connectBtn.disabled = true;
+    connectBtn.textContent = "Verbinde...";
     setConnectionModalStatus("Verbinde mit Server...", "orange");
-    connectSocket(url);
-    // room-created Event kommt nach connect
-    socket.once("connect", () => {
-      socket.emit("create-room", { username, profilePic: userProfilePic });
-    });
-  };
-}
-
-// "Raum beitreten"-Button
-if (joinRoomBtn) {
-  joinRoomBtn.onclick = () => {
-    if (!username) {
-      setConnectionModalStatus("Bitte zuerst ein Profil wählen.", "red");
-      return;
-    }
-    if (roomCodeDisplay) roomCodeDisplay.classList.add("hidden");
-    if (joinSection) joinSection.classList.remove("hidden");
-    if (joinCodeInput) joinCodeInput.focus();
-  };
-}
-
-// Code-Kopieren
-if (copyCodeBtn) {
-  copyCodeBtn.onclick = () => {
-    if (roomCodeText) {
-      navigator.clipboard?.writeText(roomCodeText.textContent).catch(() => {});
-      copyCodeBtn.textContent = "Kopiert!";
-      setTimeout(() => { copyCodeBtn.textContent = "Kopieren"; }, 2000);
-    }
-  };
-}
-
-// Host wartet → "Weiter ohne Gesprächspartner" (optional)
-if (proceedBtn) {
-  proceedBtn.onclick = () => {
-    closeConnectionModal();
-    startCall([{ id: socket?.id || "local", username, profilePic: userProfilePic }]);
-  };
-}
-
-// Bestätige Raum-Beitritt
-if (confirmJoinBtn) {
-  confirmJoinBtn.onclick = () => {
-    const code = joinCodeInput?.value?.trim().toUpperCase();
-    if (!code || code.length < 4) {
-      setConnectionModalStatus("Bitte gültigen Code eingeben.", "red");
-      return;
-    }
-    const url = (serverUrlInput?.value?.trim()) || DEFAULT_SERVER_URL;
-    currentServerUrl = url;
-    localStorage.setItem("serverUrl", url);
-    confirmJoinBtn.disabled = true;
-    confirmJoinBtn.textContent = "Verbinde...";
-    setConnectionModalStatus("Verbinde...", "orange");
 
     connectSocket(url);
     socket.once("connect", () => {
-      socket.emit("join-room", { roomCode: code, username, profilePic: userProfilePic });
+      socket.emit("connect-to-call", { username, profilePic: userProfilePic });
     });
-  };
-}
-
-// Enter im Code-Input
-if (joinCodeInput) {
-  joinCodeInput.onkeypress = (e) => {
-    if (e.key === "Enter") confirmJoinBtn?.click();
-  };
-  // Großschreibung erzwingen
-  joinCodeInput.oninput = () => {
-    joinCodeInput.value = joinCodeInput.value.toUpperCase();
   };
 }
 
@@ -417,7 +321,8 @@ profileOptions.forEach(option => {
     if (connectionModal) {
       connectionModal.classList.remove("hidden");
       if (serverUrlInput) serverUrlInput.value = currentServerUrl;
-      setConnectionModalStatus("Wähle eine Option.", "#ccc");
+      if (connectBtn) { connectBtn.disabled = false; connectBtn.textContent = "Verbinden"; }
+      setConnectionModalStatus("", "#ccc");
     }
   };
 });
@@ -467,9 +372,9 @@ async function startCall(users) {
 
     addSystemMessage(`Du bist als "${username}" beigetreten`);
 
-    // Wenn schon jemand im Raum war (Gast tritt bei), Offer vom Host anfordern
-    // Der Host reagiert auf "peer-joined" und sendet ein Offer
-    if (isHost && users.length >= 2) {
+    // Erste Person sendet das Offer sobald die zweite beitritt (via peer-joined)
+    // Zweite Person: Offer kommt vom Server, Answer wird gesendet
+    if (isFirst && users.length >= 2) {
       await sendOffer();
     }
 
@@ -953,7 +858,8 @@ joinBtn.onclick = () => {
   if (connectionModal) {
     connectionModal.classList.remove("hidden");
     if (serverUrlInput) serverUrlInput.value = currentServerUrl;
-    setConnectionModalStatus("Wähle eine Option.", "#ccc");
+    if (connectBtn) { connectBtn.disabled = false; connectBtn.textContent = "Verbinden"; }
+    setConnectionModalStatus("", "#ccc");
   }
 };
 

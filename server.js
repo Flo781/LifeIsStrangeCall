@@ -31,18 +31,13 @@ const io = new Server(server, {
 app.use(express.static(path.join(appRoot, "public")));
 app.use("/assets", express.static(path.join(appRoot, "assets")));
 
-// ---- Räume ----
-// roomCode -> { users: Map(socketId -> { username, profilePic }) }
-const rooms = new Map();
-
-function generateRoomCode() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "";
-  for (let i = 0; i < 6; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return code;
-}
+// ---- Warteraum ----
+// Ein einziger globaler Raum für genau 2 Personen.
+// users: Map(socketId -> { username, profilePic })
+const waitingRoom = {
+  name: "default",
+  users: new Map()
+};
 
 // ---- Dead by Daylight Queue API (behalten) ----
 const regionInfo = {
@@ -106,76 +101,51 @@ app.get("/api/killer-queue", async (req, res) => {
 // ---- Socket.IO ----
 io.on("connection", (socket) => {
   console.log("✓ Verbunden:", socket.id);
-  socket.currentRoom = null;
+  socket.inCall = false;
 
-  // Raum erstellen (Host)
-  socket.on("create-room", ({ username, profilePic }) => {
-    let code;
-    do { code = generateRoomCode(); } while (rooms.has(code));
-
-    rooms.set(code, {
-      users: new Map([[socket.id, { username, profilePic }]])
-    });
-    socket.currentRoom = code;
-    socket.join(code);
-
-    console.log(`✓ Raum ${code} erstellt von ${username}`);
-    socket.emit("room-created", { roomCode: code });
-  });
-
-  // Raum beitreten (Gast)
-  socket.on("join-room", ({ roomCode, username, profilePic }) => {
-    const code = String(roomCode).toUpperCase().trim();
-    const room = rooms.get(code);
-
-    if (!room) {
-      socket.emit("room-error", { message: "Raum nicht gefunden — Code überprüfen." });
-      return;
-    }
-    if (room.users.size >= 2) {
-      socket.emit("room-error", { message: "Raum ist voll (max. 2 Personen)." });
+  // Direkt verbinden — kein Code nötig
+  socket.on("connect-to-call", ({ username, profilePic }) => {
+    if (waitingRoom.users.size >= 2) {
+      socket.emit("call-error", { message: "Bereits 2 Personen im Call. Bitte warte oder versuche es später." });
       return;
     }
 
-    room.users.set(socket.id, { username, profilePic });
-    socket.currentRoom = code;
-    socket.join(code);
+    waitingRoom.users.set(socket.id, { username, profilePic });
+    socket.inCall = true;
+    socket.join(waitingRoom.name);
 
-    console.log(`✓ ${username} ist Raum ${code} beigetreten`);
+    const userCount = waitingRoom.users.size;
+    console.log(`✓ ${username} verbunden (${userCount}/2)`);
 
-    const userList = Array.from(room.users.entries()).map(([id, u]) => ({
+    const userList = Array.from(waitingRoom.users.entries()).map(([id, u]) => ({
       id, username: u.username, profilePic: u.profilePic
     }));
 
-    // Gast bekommt die Nutzerliste
-    socket.emit("room-joined", { roomCode: code, users: userList });
+    // Bestätigung an den neuen User
+    socket.emit("call-joined", {
+      users: userList,
+      isFirst: userCount === 1   // true = erste Person (wird später Host)
+    });
 
-    // Host erfährt dass Gast beigetreten ist
-    socket.to(code).emit("peer-joined", { id: socket.id, username, profilePic });
+    // Den anderen informieren dass jemand beigetreten ist
+    if (userCount === 2) {
+      socket.to(waitingRoom.name).emit("peer-joined", { id: socket.id, username, profilePic });
+    }
   });
 
-  // Raum-Code-Prüfung (optional, ohne beitreten)
-  socket.on("check-room", ({ roomCode }) => {
-    const code = String(roomCode).toUpperCase().trim();
-    const room = rooms.get(code);
-    if (!room) { socket.emit("room-check-result", { exists: false }); return; }
-    socket.emit("room-check-result", { exists: true, userCount: room.users.size });
-  });
-
-  // WebRTC Signaling — nur innerhalb des Raums
+  // WebRTC Signaling — nur innerhalb des Calls
   socket.on("signal", (data) => {
-    if (socket.currentRoom) {
-      socket.to(socket.currentRoom).emit("signal", data);
+    if (socket.inCall) {
+      socket.to(waitingRoom.name).emit("signal", data);
     }
   });
 
   // Chat
   socket.on("chat-message", (text) => {
-    if (!socket.currentRoom) return;
-    const room = rooms.get(socket.currentRoom);
-    const user = room?.users.get(socket.id);
+    if (!socket.inCall) return;
+    const user = waitingRoom.users.get(socket.id);
     if (!user) return;
-    io.to(socket.currentRoom).emit("chat-message", {
+    io.to(waitingRoom.name).emit("chat-message", {
       id: socket.id,
       username: user.username,
       text: String(text).slice(0, 500),
@@ -185,32 +155,21 @@ io.on("connection", (socket) => {
 
   // Screen Share gestoppt
   socket.on("screen-share-stopped", () => {
-    if (socket.currentRoom) {
-      socket.to(socket.currentRoom).emit("screen-share-stopped");
+    if (socket.inCall) {
+      socket.to(waitingRoom.name).emit("screen-share-stopped");
     }
   });
 
   // Disconnect
   socket.on("disconnect", () => {
-    if (!socket.currentRoom) return;
-    const room = rooms.get(socket.currentRoom);
-    if (!room) return;
-
-    const user = room.users.get(socket.id);
+    if (!socket.inCall) return;
+    const user = waitingRoom.users.get(socket.id);
     if (user) {
-      console.log(`✓ ${user.username} getrennt (${socket.currentRoom})`);
-      socket.to(socket.currentRoom).emit("peer-left", {
-        id: socket.id,
-        username: user.username
-      });
+      console.log(`✓ ${user.username} getrennt`);
+      socket.to(waitingRoom.name).emit("peer-left", { id: socket.id, username: user.username });
     }
-
-    room.users.delete(socket.id);
-
-    if (room.users.size === 0) {
-      rooms.delete(socket.currentRoom);
-      console.log(`✓ Raum ${socket.currentRoom} gelöscht (leer)`);
-    }
+    waitingRoom.users.delete(socket.id);
+    console.log(`✓ Call-Nutzer: ${waitingRoom.users.size}/2`);
   });
 
   socket.on("error", (err) => console.error("Socket-Fehler:", err));

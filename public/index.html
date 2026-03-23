@@ -986,87 +986,22 @@
       letter-spacing: 1px;
     }
     .connection-box input[type="text"]:focus { border-color: #c89b7b; }
-    .conn-buttons {
-      display: flex;
-      gap: 12px;
-    }
-    .conn-buttons button {
-      flex: 1;
-      padding: 12px;
-      border: none;
-      border-radius: 10px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      font-family: inherit;
-      transition: background 0.2s, transform 0.1s;
-    }
-    .conn-buttons button:hover { transform: scale(1.02); }
-    .conn-buttons button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-    #createRoomBtn { background: #c89b7b; color: #1a1a2e; }
-    #createRoomBtn:hover:not(:disabled) { background: #d4aa8a; }
-    #joinRoomBtn { background: #2a2a4a; color: #ccc; border: 1px solid #7d8d9e; }
-    #joinRoomBtn:hover:not(:disabled) { background: #3a3a5a; }
-
-    .room-code-display {
-      background: #16213e;
-      border: 2px dashed #c89b7b;
-      border-radius: 12px;
-      padding: 16px;
-      text-align: center;
-    }
-    .room-code-display p { font-size: 13px; color: #aaa; margin-bottom: 8px; }
-    .room-code-value {
-      font-size: 32px;
-      font-weight: 700;
-      letter-spacing: 6px;
-      color: #c89b7b;
-      font-family: monospace;
-    }
-    .room-code-actions {
-      display: flex;
-      gap: 10px;
-      margin-top: 12px;
-      justify-content: center;
-    }
-    .room-code-actions button {
-      padding: 8px 16px;
-      border: none;
-      border-radius: 8px;
-      font-size: 13px;
-      cursor: pointer;
-      font-family: inherit;
-    }
-    #copyCodeBtn { background: #2a2a4a; color: #ccc; border: 1px solid #7d8d9e; }
-    #proceedBtn { background: #c89b7b; color: #1a1a2e; font-weight: 600; }
-
-    .join-section {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-    .join-section input {
-      text-align: center;
-      font-size: 22px;
-      letter-spacing: 8px;
-      text-transform: uppercase;
-      font-weight: 700;
-    }
-    #confirmJoinBtn {
+    #connectBtn {
       width: 100%;
-      padding: 12px;
+      padding: 14px;
       background: #c89b7b;
       color: #1a1a2e;
       border: none;
       border-radius: 10px;
-      font-size: 15px;
+      font-size: 16px;
       font-weight: 700;
       cursor: pointer;
       font-family: inherit;
-      transition: background 0.2s;
+      transition: background 0.2s, transform 0.1s;
+      letter-spacing: 0.5px;
     }
-    #confirmJoinBtn:hover:not(:disabled) { background: #d4aa8a; }
-    #confirmJoinBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #connectBtn:hover:not(:disabled) { background: #d4aa8a; transform: scale(1.02); }
+    #connectBtn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
     #connectionModalStatus {
       text-align: center;
@@ -1153,27 +1088,7 @@
         <input type="text" id="serverUrlInput" placeholder="https://lifeisstrange-production.up.railway.app">
       </div>
 
-      <div class="conn-buttons">
-        <button id="createRoomBtn">➕ Raum erstellen</button>
-        <button id="joinRoomBtn">🔑 Raum beitreten</button>
-      </div>
-
-      <!-- Raum-Code-Anzeige (nach Erstellung) -->
-      <div class="room-code-display hidden" id="roomCodeDisplay">
-        <p>Dein Raum-Code — teile ihn mit deiner Freundin:</p>
-        <div class="room-code-value" id="roomCodeText">------</div>
-        <div class="room-code-actions">
-          <button id="copyCodeBtn">Kopieren</button>
-          <button id="proceedBtn">Warten &amp; beitreten</button>
-        </div>
-      </div>
-
-      <!-- Code eingeben (als Gast) -->
-      <div class="join-section hidden" id="joinSection">
-        <label for="joinCodeInput">Raum-Code eingeben</label>
-        <input type="text" id="joinCodeInput" placeholder="XXXXXX" maxlength="8">
-        <button id="confirmJoinBtn">Beitreten</button>
-      </div>
+      <button id="connectBtn">Verbinden</button>
 
       <div id="connectionModalStatus"></div>
     </div>
