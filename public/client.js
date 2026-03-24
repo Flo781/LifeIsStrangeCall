@@ -370,8 +370,9 @@ async function startCall(users) {
       }
     });
 
-    // Mikrofon-Lautstärke boosten via GainNode (2.5x)
+    // Mikrofon-Lautstärke boosten via GainNode
     const micAudioCtx = new AudioContext();
+    await micAudioCtx.resume();
     const micSource = micAudioCtx.createMediaStreamSource(localStream);
     const micGain = micAudioCtx.createGain();
     micGain.gain.value = 12.0;
@@ -634,11 +635,12 @@ async function handleSignal(data) {
           }
         });
 
-        // Mikrofon-Lautstärke boosten via GainNode (2.5x)
+        // Mikrofon-Lautstärke boosten via GainNode
         const micAudioCtx2 = new AudioContext();
+        await micAudioCtx2.resume();
         const micSource2 = micAudioCtx2.createMediaStreamSource(localStream);
         const micGain2 = micAudioCtx2.createGain();
-        micGain2.gain.value = 4.0;
+        micGain2.gain.value = 12.0;
         const micDest2 = micAudioCtx2.createMediaStreamDestination();
         micSource2.connect(micGain2);
         micGain2.connect(micDest2);
