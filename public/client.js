@@ -374,7 +374,7 @@ async function startCall(users) {
     const micAudioCtx = new AudioContext();
     const micSource = micAudioCtx.createMediaStreamSource(localStream);
     const micGain = micAudioCtx.createGain();
-    micGain.gain.value = 2.5;
+    micGain.gain.value = 4.0;
     const micDest = micAudioCtx.createMediaStreamDestination();
     micSource.connect(micGain);
     micGain.connect(micDest);
@@ -638,7 +638,7 @@ async function handleSignal(data) {
         const micAudioCtx2 = new AudioContext();
         const micSource2 = micAudioCtx2.createMediaStreamSource(localStream);
         const micGain2 = micAudioCtx2.createGain();
-        micGain2.gain.value = 2.5;
+        micGain2.gain.value = 4.0;
         const micDest2 = micAudioCtx2.createMediaStreamDestination();
         micSource2.connect(micGain2);
         micGain2.connect(micDest2);
