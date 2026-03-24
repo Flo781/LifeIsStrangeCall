@@ -370,6 +370,16 @@ async function startCall(users) {
       }
     });
 
+    // Mikrofon-Lautstärke boosten via GainNode (2.5x)
+    const micAudioCtx = new AudioContext();
+    const micSource = micAudioCtx.createMediaStreamSource(localStream);
+    const micGain = micAudioCtx.createGain();
+    micGain.gain.value = 2.5;
+    const micDest = micAudioCtx.createMediaStreamDestination();
+    micSource.connect(micGain);
+    micGain.connect(micDest);
+    localStream = micDest.stream;
+
     await createPeerConnection();
 
     // Eigene Tracks hinzufügen
@@ -623,6 +633,17 @@ async function handleSignal(data) {
             channelCount: 1
           }
         });
+
+        // Mikrofon-Lautstärke boosten via GainNode (2.5x)
+        const micAudioCtx2 = new AudioContext();
+        const micSource2 = micAudioCtx2.createMediaStreamSource(localStream);
+        const micGain2 = micAudioCtx2.createGain();
+        micGain2.gain.value = 2.5;
+        const micDest2 = micAudioCtx2.createMediaStreamDestination();
+        micSource2.connect(micGain2);
+        micGain2.connect(micDest2);
+        localStream = micDest2.stream;
+
         localStream.getTracks().forEach(track => {
           const sender = peerConnection.addTrack(track, localStream);
           if (track.kind === "audio") {
