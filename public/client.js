@@ -15,6 +15,8 @@ let peerReady = false;       // Ist der andere User bereits verbunden?
 
 // ---- WebRTC Zustand ----
 let localStream = null;
+let originalMicStream = null;  // Original-Mikrofon-Stream (für Echo-Cancellation-Referenz)
+let micAudioContext = null;    // Globaler AudioContext für Mikrofon-Boost
 let peerConnection = null;
 let screenStream = null;
 let isMuted = false;
@@ -23,6 +25,9 @@ let vadInterval = null;
 let isNegotiating = false;
 let username = "";
 let userProfilePic = "";
+
+// ---- Mikrofon-Boost Einstellungen ----
+const MIC_GAIN = 12.0;  // Verstärkungsfaktor
 
 // ---- Track-Zuordnung ----
 let participants = new Map();       // socketId -> { username, tile, profilePic }
@@ -91,6 +96,35 @@ function optimizeAudioSDP(sdp) {
       /a=fmtp:111 minptime=10\n/g,
       "a=fmtp:111 minptime=10;useinbandfec=1;maxaveragebitrate=510000;maxplaybackrate=48000\n"
     );
+}
+
+// ---- Mikrofon-Boost via GainNode ----
+// Wichtig: Der geboostete Stream verliert Browser-Echo-Cancellation,
+// daher sollte die Gegenseite Kopfhörer nutzen wenn sie Screen-Shared.
+async function boostMicStream(stream) {
+  try {
+    // Alten AudioContext schließen falls vorhanden
+    if (micAudioContext) {
+      try { micAudioContext.close(); } catch (e) { /* ignore */ }
+    }
+
+    micAudioContext = new AudioContext();
+    await micAudioContext.resume();
+
+    const source = micAudioContext.createMediaStreamSource(stream);
+    const gain = micAudioContext.createGain();
+    gain.gain.value = MIC_GAIN;
+    const dest = micAudioContext.createMediaStreamDestination();
+
+    source.connect(gain);
+    gain.connect(dest);
+
+    console.log(`Mikrofon-Boost aktiv: ${MIC_GAIN}x`);
+    return dest.stream;
+  } catch (e) {
+    console.error("Mikrofon-Boost Fehler:", e);
+    return stream;  // Fallback: Original-Stream
+  }
 }
 
 // ---- Sound-Effekte ----
@@ -370,16 +404,9 @@ async function startCall(users) {
       }
     });
 
-    // Mikrofon-Lautstärke boosten via GainNode
-    const micAudioCtx = new AudioContext();
-    await micAudioCtx.resume();
-    const micSource = micAudioCtx.createMediaStreamSource(localStream);
-    const micGain = micAudioCtx.createGain();
-    micGain.gain.value = 12.0;
-    const micDest = micAudioCtx.createMediaStreamDestination();
-    micSource.connect(micGain);
-    micGain.connect(micDest);
-    localStream = micDest.stream;
+    // Mikrofon-Boost anwenden
+    originalMicStream = localStream;
+    localStream = await boostMicStream(localStream);
 
     await createPeerConnection();
 
@@ -441,8 +468,16 @@ async function createPeerConnection() {
       updateConnectionStatus(true);
       addSystemMessage("✅ Direkt verbunden!");
     } else if (state === "disconnected") {
-      addSystemMessage("⚠️ Verbindung kurz unterbrochen...");
+      updateConnectionStatus(false);
+      addSystemMessage("⚠️ Verbindung unterbrochen — versuche Neuverbindung...");
+      // Nach 3 Sekunden ICE Restart falls noch disconnected
+      setTimeout(() => {
+        if (peerConnection?.connectionState === "disconnected") {
+          doIceRestart();
+        }
+      }, 3000);
     } else if (state === "failed") {
+      updateConnectionStatus(false);
       addSystemMessage("❌ Verbindung fehlgeschlagen — ICE Restart...");
       doIceRestart();
     }
@@ -503,28 +538,17 @@ function handleRemoteVideoTrack(track, stream) {
   });
   const label = remoteUsername ? `${remoteUsername}'s Screen` : "Screen Share";
 
-  const container = createVideoContainer(stream, label, false);
+  // Nur den Video-Track ins Video-Element laden — Audio kommt ausschließlich
+  // über ein separates <audio>-Element (handleRemoteAudioTrack). So kann das
+  // Video-Element niemals Audio ausgeben, egal welchen muted-Zustand es hat.
+  const videoOnlyStream = new MediaStream(stream.getVideoTracks());
+  const container = createVideoContainer(videoOnlyStream, label, false);
+  container.dataset.streamId = stream.id; // originale Stream-ID für Tracking beibehalten
   const video = container.querySelector("video");
-  video.muted = true; // Audio kommt über separates Element
   video.play().catch(() => {});
 
   remoteScreenStreams.set(stream.id, { container, audioEl: null });
   console.log(`Screen Share Video registriert: ${stream.id}`);
-
-  // Audio-Track falls schon im Stream vorhanden
-  if (stream.getAudioTracks().length > 0) {
-    const entry = remoteScreenStreams.get(stream.id);
-    entry.audioEl = createScreenAudioElement(stream);
-  }
-
-  // Auf zukünftige Audio-Tracks im selben Stream warten
-  stream.addEventListener("addtrack", (e) => {
-    if (e.track.kind !== "audio") return;
-    const entry = remoteScreenStreams.get(stream.id);
-    if (entry && !entry.audioEl) {
-      entry.audioEl = createScreenAudioElement(stream);
-    }
-  });
 
   track.onended = () => {
     const entry = remoteScreenStreams.get(stream.id);
@@ -623,7 +647,7 @@ async function handleSignal(data) {
 
       // Mikrofon hinzufügen falls noch nicht vorhanden
       if (!localStream) {
-        localStream = await navigator.mediaDevices.getUserMedia({
+        const rawMicStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             googEchoCancellation: true,
@@ -635,16 +659,9 @@ async function handleSignal(data) {
           }
         });
 
-        // Mikrofon-Lautstärke boosten via GainNode
-        const micAudioCtx2 = new AudioContext();
-        await micAudioCtx2.resume();
-        const micSource2 = micAudioCtx2.createMediaStreamSource(localStream);
-        const micGain2 = micAudioCtx2.createGain();
-        micGain2.gain.value = 12.0;
-        const micDest2 = micAudioCtx2.createMediaStreamDestination();
-        micSource2.connect(micGain2);
-        micGain2.connect(micDest2);
-        localStream = micDest2.stream;
+        // Mikrofon-Boost anwenden
+        originalMicStream = rawMicStream;
+        localStream = await boostMicStream(rawMicStream);
 
         localStream.getTracks().forEach(track => {
           const sender = peerConnection.addTrack(track, localStream);
@@ -1036,6 +1053,8 @@ screenBtn.onclick = async () => {
 
     if (!gotAudio) {
       addSystemMessage("⚠️ System-Audio nicht verfügbar — nur Video wird übertragen");
+    } else {
+      addSystemMessage("🎧 Tipp: Kopfhörer nutzen um Echo zu vermeiden");
     }
 
     // KERNFIX: Stream-ID VOR der Renegotiation an Gegenseite senden
@@ -1145,8 +1164,16 @@ function cleanup() {
   vadAnalysers.forEach((_, id) => stopVAD(id));
   vadAnalysers.clear();
 
+  // AudioContext schließen
+  if (micAudioContext) {
+    try { micAudioContext.close(); } catch (e) { /* ignore */ }
+    micAudioContext = null;
+  }
+
   localStream?.getTracks().forEach(t => t.stop());
   localStream = null;
+  originalMicStream?.getTracks().forEach(t => t.stop());
+  originalMicStream = null;
 
   screenStream?.getTracks().forEach(t => t.stop());
   screenStream = null;
@@ -1388,19 +1415,24 @@ audioDeviceApply.onclick = async () => {
   if (newIn && newIn !== selectedInputDeviceId) {
     selectedInputDeviceId = newIn;
     try {
-      const ns = await navigator.mediaDevices.getUserMedia({
+      const rawStream = await navigator.mediaDevices.getUserMedia({
         audio: { deviceId: { exact: newIn }, echoCancellation: true, googEchoCancellation: true, googEchoCancellation2: true, noiseSuppression: true, autoGainControl: false, channelCount: 1 }
       });
-      const newTrack = ns.getAudioTracks()[0];
+
+      // Mikrofon-Boost anwenden
+      originalMicStream = rawStream;
+      const boostedStream = await boostMicStream(rawStream);
+      const newTrack = boostedStream.getAudioTracks()[0];
+
       if (localStream) {
         localStream.getAudioTracks().forEach(t => t.stop());
-        localStream = ns;
+        localStream = boostedStream;
         if (peerConnection) {
           const sender = peerConnection.getSenders().find(s => s.track?.kind === "audio");
           if (sender) await sender.replaceTrack(newTrack);
         }
       }
-      addSystemMessage("🎤 Mikrofon geändert: " + newTrack.label);
+      addSystemMessage("🎤 Mikrofon geändert: " + rawStream.getAudioTracks()[0]?.label);
     } catch (e) {
       alert("Eingabegerät konnte nicht gewechselt werden: " + e.message);
     }
