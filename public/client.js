@@ -1019,7 +1019,9 @@ screenBtn.onclick = async () => {
           frameRate: { ideal: preset.fps }
         },
         audio: {
-          echoCancellation: false,
+          echoCancellation: true,
+          googEchoCancellation: true,
+          googDAEchoCancellation: true,
           noiseSuppression: false,
           autoGainControl: false,
           sampleRate: 48000,
@@ -1053,8 +1055,6 @@ screenBtn.onclick = async () => {
 
     if (!gotAudio) {
       addSystemMessage("⚠️ System-Audio nicht verfügbar — nur Video wird übertragen");
-    } else {
-      addSystemMessage("🎧 Tipp: Kopfhörer nutzen um Echo zu vermeiden");
     }
 
     // KERNFIX: Stream-ID VOR der Renegotiation an Gegenseite senden
