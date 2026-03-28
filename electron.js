@@ -252,13 +252,6 @@ function openPickerWindow(sources, blackHoleInstalled, onResult) {
            ? "✅ BlackHole erkannt — System-Audio wird übertragen!"
            : "⚠️ BlackHole nicht gefunden — kein System-Audio auf Mac möglich."}
        </div>`
-    : isWin
-    ? `<div style="margin-top:8px;padding:10px 14px;background:#16213e;
-         border-left:3px solid #e5a823;border-radius:6px;font-size:12px;color:#bbb;line-height:1.6;">
-         ⚠️ System-Audio überträgt ALLES was aus deinen Lautsprechern kommt — auch die Stimme deines Gesprächspartners.<br>
-         Das führt dazu, dass sie sich selbst als Echo hören.<br>
-         <strong style="color:#c89b7b;">Lösung: Kopfhörer verwenden</strong> oder System-Audio deaktivieren.
-       </div>`
     : "";
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>

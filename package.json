@@ -51,7 +51,8 @@
           ]
         }
       ],
-      "icon": "assets/icons/icon.ico"
+      "icon": "assets/icons/icon.ico",
+      "signAndEditExecutable": false
     },
     "mac": {
       "target": [
