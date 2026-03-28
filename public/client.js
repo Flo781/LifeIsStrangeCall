@@ -25,10 +25,9 @@ let vadInterval = null;
 let isNegotiating = false;
 let username = "";
 let userProfilePic = "";
-let screenEchoCancelState = null;  // Echo-Cancellation für Screen-Share-Audio
 
 // ---- Mikrofon-Boost Einstellungen ----
-const MIC_GAIN = 12.0;  // Verstärkungsfaktor
+const MIC_GAIN = 2.0;  // Verstärkungsfaktor
 
 // ---- Track-Zuordnung ----
 let participants = new Map();       // socketId -> { username, tile, profilePic }
@@ -1004,71 +1003,6 @@ qualityOptions.forEach(opt => {
 // ============================================================
 const { ipcRenderer } = window.require ? window.require("electron") : { ipcRenderer: null };
 
-// ---- Screen-Share Echo-Cancellation ----
-// Entfernt das Echo der Remote-Stimme aus dem Windows-Loopback-Audio.
-// Funktioniert per Phasen-Invertierung: das Remote-Audio wird invertiert
-// und dem Screen-Share-Audio beigemischt, sodass es sich aufhebt.
-function setupScreenEchoCancellation(screenAudioTrack) {
-  const remoteEntries = [];
-  for (const [, audioEl] of userAudioElements) {
-    if (audioEl.srcObject && audioEl.srcObject.getAudioTracks().length > 0) {
-      remoteEntries.push({ el: audioEl, stream: audioEl.srcObject });
-    }
-  }
-
-  if (remoteEntries.length === 0) {
-    console.log("Echo-Cancel: Kein Remote-Audio aktiv — kein Processing nötig");
-    return { processedTrack: screenAudioTrack, cleanup: () => {} };
-  }
-
-  try {
-    const ctx = new AudioContext({ sampleRate: 48000 });
-    const destination = ctx.createMediaStreamDestination();
-
-    // Screen-Share Loopback-Audio → Destination (enthält Game-Audio + Echo)
-    const screenSource = ctx.createMediaStreamSource(new MediaStream([screenAudioTrack]));
-    screenSource.connect(destination);
-
-    // Pipeline-Delay-Kompensation: OS Audio Buffer + Chromium Pipeline ≈ 20ms
-    const ECHO_DELAY_S = 0.020;
-
-    const savedState = [];
-    for (const { el, stream } of remoteEntries) {
-      const origVol = el.volume;
-      el.volume = 0; // Audio-Element stummschalten (kein Doppel-Output)
-
-      const source = ctx.createMediaStreamSource(stream);
-
-      // Pfad 1: Weiterhin über Lautsprecher abspielen (Sender hört Partner noch)
-      source.connect(ctx.destination);
-
-      // Pfad 2: Invertiert + verzögert → hebt sich mit dem Loopback-Echo auf
-      const delay = ctx.createDelay(1.0);
-      delay.delayTime.value = ECHO_DELAY_S;
-      const invert = ctx.createGain();
-      invert.gain.value = -1.0;
-      source.connect(delay);
-      delay.connect(invert);
-      invert.connect(destination);
-
-      savedState.push({ el, origVol });
-    }
-
-    console.log(`Echo-Cancel: ${remoteEntries.length} Remote-Stream(s), Delay ${ECHO_DELAY_S * 1000}ms ✓`);
-    return {
-      processedTrack: destination.stream.getAudioTracks()[0],
-      cleanup: () => {
-        savedState.forEach(({ el, origVol }) => { el.volume = origVol; });
-        try { ctx.close(); } catch (e) { /* ignore */ }
-        console.log("Echo-Cancel: Cleanup ✓");
-      }
-    };
-  } catch (e) {
-    console.error("Echo-Cancel Fehler:", e);
-    return { processedTrack: screenAudioTrack, cleanup: () => {} };
-  }
-}
-
 screenBtn.onclick = async () => {
   if (!peerConnection) { alert("Zuerst Join klicken!"); return; }
 
@@ -1123,15 +1057,12 @@ screenBtn.onclick = async () => {
       addSystemMessage("⚠️ System-Audio nicht verfügbar — nur Video wird übertragen");
     }
 
-    // Echo-Cancellation aktivieren: entfernt die Remote-Stimme aus dem Loopback
+    // Remote-Audio muten wenn Screen Share mit Audio aktiv ist
+    // (System-Audio enthält die Stimme des Partners bereits über Loopback)
     if (gotAudio) {
-      const audioTrack = screenStream.getAudioTracks()[0];
-      if (audioTrack) {
-        const ec = setupScreenEchoCancellation(audioTrack);
-        screenEchoCancelState = ec;
-        if (ec.processedTrack !== audioTrack) {
-          addSystemMessage("🔇 Echo-Cancellation aktiv — Remote-Stimme wird aus System-Audio gefiltert");
-        }
+      for (const [, audioEl] of userAudioElements) {
+        audioEl.dataset.wasMutedByScreen = "true";
+        audioEl.muted = true;
       }
     }
 
@@ -1146,9 +1077,7 @@ screenBtn.onclick = async () => {
     isNegotiating = true;
     try {
       screenStream.getTracks().forEach(track => {
-        const trackToSend = (track.kind === "audio" && screenEchoCancelState?.processedTrack)
-          ? screenEchoCancelState.processedTrack : track;
-        const sender = peerConnection.addTrack(trackToSend, screenStream);
+        const sender = peerConnection.addTrack(track, screenStream);
 
         if (track.kind === "video") {
           try { track.contentHint = "detail"; } catch (e) { /* ignore */ }
@@ -1215,11 +1144,10 @@ function stopScreenShare() {
 
   const id = stream.id;
 
-  // Tracks aus PeerConnection entfernen (inkl. echo-cancelled Audio-Track)
+  // Tracks aus PeerConnection entfernen
   if (peerConnection) {
-    const ecTrack = screenEchoCancelState?.processedTrack;
     peerConnection.getSenders()
-      .filter(s => s.track && (stream.getTracks().includes(s.track) || s.track === ecTrack))
+      .filter(s => s.track && stream.getTracks().includes(s.track))
       .forEach(s => { try { peerConnection.removeTrack(s); } catch (e) { /* ignore */ } });
   }
 
@@ -1228,10 +1156,12 @@ function stopScreenShare() {
   socket?.emit("screen-share-stopped");
   expectedScreenStreamId = null;
 
-  // Echo-Cancellation aufräumen
-  if (screenEchoCancelState) {
-    screenEchoCancelState.cleanup();
-    screenEchoCancelState = null;
+  // Remote-Audio wieder entmuten
+  for (const [, audioEl] of userAudioElements) {
+    if (audioEl.dataset.wasMutedByScreen === "true") {
+      audioEl.muted = false;
+      delete audioEl.dataset.wasMutedByScreen;
+    }
   }
 
   screenBtn.style.display = "flex";
@@ -1256,11 +1186,6 @@ function cleanup() {
     try { micAudioContext.close(); } catch (e) { /* ignore */ }
     micAudioContext = null;
   }
-  if (screenEchoCancelState) {
-    screenEchoCancelState.cleanup();
-    screenEchoCancelState = null;
-  }
-
   localStream?.getTracks().forEach(t => t.stop());
   localStream = null;
   originalMicStream?.getTracks().forEach(t => t.stop());
