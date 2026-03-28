@@ -312,6 +312,7 @@ function connectSocket(url) {
     });
     remoteScreenStreams.clear();
     expectedScreenStreamId = null;
+    unmuteRemoteMicAfterScreenShare();
     addSystemMessage("Screen Share beendet");
   });
 }
@@ -565,6 +566,26 @@ function handleRemoteVideoTrack(track, stream) {
 // SCREEN SHARE: Remote Audio-Track
 // Kernfix: Stream-ID vs. expectedScreenStreamId prüfen
 // ============================================================
+// Mikrofon-Audio des Partners muten wenn Screen-Share-Audio empfangen wird
+// (die Stimme kommt eh schon über das System-Audio im Screen Share)
+function muteRemoteMicDuringScreenShare() {
+  for (const [, audioEl] of userAudioElements) {
+    audioEl.dataset.wasMutedByScreen = "true";
+    audioEl.muted = true;
+  }
+  console.log("Remote-Mic gemutet (Screen-Share-Audio aktiv)");
+}
+
+function unmuteRemoteMicAfterScreenShare() {
+  for (const [, audioEl] of userAudioElements) {
+    if (audioEl.dataset.wasMutedByScreen === "true") {
+      audioEl.muted = false;
+      delete audioEl.dataset.wasMutedByScreen;
+    }
+  }
+  console.log("Remote-Mic entmutet (Screen Share beendet)");
+}
+
 function handleRemoteAudioTrack(track, stream) {
   // Niemals eigenen lokalen Stream abspielen
   if (stream.id === localStream?.id || stream.id === screenStream?.id) {
@@ -577,6 +598,7 @@ function handleRemoteAudioTrack(track, stream) {
     const entry = remoteScreenStreams.get(stream.id);
     if (!entry.audioEl) {
       entry.audioEl = createScreenAudioElement(stream);
+      muteRemoteMicDuringScreenShare();
       console.log("Screen-Audio zugeordnet (via remoteScreenStreams)");
     }
     return;
@@ -590,12 +612,16 @@ function handleRemoteAudioTrack(track, stream) {
     const waitAndAssign = (retries = 10) => {
       const entry = remoteScreenStreams.get(stream.id);
       if (entry) {
-        if (!entry.audioEl) entry.audioEl = createScreenAudioElement(stream);
+        if (!entry.audioEl) {
+          entry.audioEl = createScreenAudioElement(stream);
+          muteRemoteMicDuringScreenShare();
+        }
       } else if (retries > 0) {
         setTimeout(() => waitAndAssign(retries - 1), 150);
       } else {
         // Fallback: eigenes Audio-Element erstellen
         createScreenAudioElement(stream);
+        muteRemoteMicDuringScreenShare();
       }
     };
     waitAndAssign();
@@ -1057,15 +1083,6 @@ screenBtn.onclick = async () => {
       addSystemMessage("⚠️ System-Audio nicht verfügbar — nur Video wird übertragen");
     }
 
-    // Remote-Audio muten wenn Screen Share mit Audio aktiv ist
-    // (System-Audio enthält die Stimme des Partners bereits über Loopback)
-    if (gotAudio) {
-      for (const [, audioEl] of userAudioElements) {
-        audioEl.dataset.wasMutedByScreen = "true";
-        audioEl.muted = true;
-      }
-    }
-
     // KERNFIX: Stream-ID VOR der Renegotiation an Gegenseite senden
     // damit ontrack die Audio-Tracks korrekt zuordnen kann
     socket.emit("signal", { screenShareStreamId: screenStream.id });
@@ -1156,13 +1173,7 @@ function stopScreenShare() {
   socket?.emit("screen-share-stopped");
   expectedScreenStreamId = null;
 
-  // Remote-Audio wieder entmuten
-  for (const [, audioEl] of userAudioElements) {
-    if (audioEl.dataset.wasMutedByScreen === "true") {
-      audioEl.muted = false;
-      delete audioEl.dataset.wasMutedByScreen;
-    }
-  }
+
 
   screenBtn.style.display = "flex";
   stopScreenBtn.style.display = "none";
