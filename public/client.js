@@ -27,7 +27,7 @@ let username = "";
 let userProfilePic = "";
 
 // ---- Mikrofon-Boost Einstellungen ----
-const MIC_GAIN = 2.0;  // Verstärkungsfaktor
+const MIC_GAIN = 12.0;  // Verstärkungsfaktor
 
 // ---- Track-Zuordnung ----
 let participants = new Map();       // socketId -> { username, tile, profilePic }
