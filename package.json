@@ -1,6 +1,6 @@
 {
   "name": "LifeIsStrangeCall",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Life is Strange Call App",
   "main": "electron.js",
   "scripts": {

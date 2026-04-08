@@ -26,8 +26,9 @@ let isNegotiating = false;
 let username = "";
 let userProfilePic = "";
 
-// ---- Mikrofon-Boost Einstellungen ----
-const MIC_GAIN = 12.0;  // Verstärkungsfaktor
+// ---- Screen-Share AEC ----
+let screenAecContext = null;
+let aecProcessedAudioTrack = null;
 
 // ---- Track-Zuordnung ----
 let participants = new Map();       // socketId -> { username, tile, profilePic }
@@ -125,6 +126,65 @@ async function boostMicStream(stream) {
     console.error("Mikrofon-Boost Fehler:", e);
     return stream;  // Fallback: Original-Stream
   }
+}
+
+// ---- Loopback Echo Cancellation ----
+// Zieht die bekannte Partner-Stimme (Reference) aus dem WASAPI-Loopback heraus,
+// bevor das System-Audio an die Gegenseite gesendet wird.
+// So hört sich der Partner nicht selbst doppelt im Stream-Audio.
+function createLoopbackAEC(loopbackStream, referenceStream) {
+  const SAMPLE_RATE = 48000;
+  // Geschätzte Latenz vom Abspielen bis zur Loopback-Erfassung (~40 ms)
+  const DELAY_SAMPLES = Math.round(0.04 * SAMPLE_RATE);
+  const CANCEL_GAIN   = 0.85;
+
+  const ctx  = new AudioContext({ sampleRate: SAMPLE_RATE });
+  const lSrc = ctx.createMediaStreamSource(loopbackStream);
+  const rSrc = ctx.createMediaStreamSource(referenceStream);
+
+  // Ringpuffer für das Reference-Signal (1 Sekunde)
+  const refBuf = new Float32Array(SAMPLE_RATE);
+  let writeIdx = 0;
+
+  // Mono-Downmix per GainNode (falls Stereo-Quellen)
+  const toMono = (src) => {
+    const g = ctx.createGain();
+    g.channelCount     = 1;
+    g.channelCountMode = "explicit";
+    src.connect(g);
+    return g;
+  };
+
+  const merger = ctx.createChannelMerger(2);
+  toMono(lSrc).connect(merger, 0, 0); // Kanal 0 = Loopback
+  toMono(rSrc).connect(merger, 0, 1); // Kanal 1 = Reference
+
+  // ScriptProcessor: liest Loopback (ch0) und Reference (ch1),
+  // gibt Loopback − verzögertes Reference aus
+  const proc = ctx.createScriptProcessor(512, 2, 1);
+  proc.onaudioprocess = (ev) => {
+    const loIn  = ev.inputBuffer.getChannelData(0);
+    const refIn = ev.inputBuffer.getChannelData(1);
+    const out   = ev.outputBuffer.getChannelData(0);
+
+    // Reference in Ringpuffer schreiben
+    for (let i = 0; i < refIn.length; i++) {
+      refBuf[(writeIdx + i) % refBuf.length] = refIn[i];
+    }
+    // Loopback − verzögerte Reference → sauberes Game-Audio
+    for (let i = 0; i < loIn.length; i++) {
+      const ri = ((writeIdx + i - DELAY_SAMPLES) % refBuf.length + refBuf.length) % refBuf.length;
+      out[i] = loIn[i] - refBuf[ri] * CANCEL_GAIN;
+    }
+    writeIdx = (writeIdx + refIn.length) % refBuf.length;
+  };
+
+  merger.connect(proc);
+  const dest = ctx.createMediaStreamDestination();
+  proc.connect(dest);
+
+  console.log("Loopback-AEC erstellt ✓");
+  return { ctx, processedStream: dest.stream };
 }
 
 // ---- Sound-Effekte ----
@@ -312,7 +372,6 @@ function connectSocket(url) {
     });
     remoteScreenStreams.clear();
     expectedScreenStreamId = null;
-    unmuteRemoteMicAfterScreenShare();
     addSystemMessage("Screen Share beendet");
   });
 }
@@ -393,21 +452,18 @@ async function startCall(users) {
         googEchoCancellation: true,
         googEchoCancellation2: true,
         googDAEchoCancellation: true,   // Delay-agnostisches AEC (hilft bei Software-Loopback)
-        googAutoGainControl: false,
-        googAutoGainControl2: false,
+        googAutoGainControl: true,
+        googAutoGainControl2: true,
         googNoiseSuppression: true,
         googHighpassFilter: true,
         noiseSuppression: true,
-        autoGainControl: false,
+        autoGainControl: true,          // Browser-AGC erhält die AEC-Referenz aufrecht
         sampleRate: 48000,
         channelCount: 1,
         ...(selectedInputDeviceId ? { deviceId: { exact: selectedInputDeviceId } } : {})
       }
     });
-
-    // Mikrofon-Boost anwenden
-    originalMicStream = localStream;
-    localStream = await boostMicStream(localStream);
+    // Kein manueller Boost: Browser-AGC normalisiert die Lautstärke ohne die AEC zu brechen
 
     await createPeerConnection();
 
@@ -598,7 +654,6 @@ function handleRemoteAudioTrack(track, stream) {
     const entry = remoteScreenStreams.get(stream.id);
     if (!entry.audioEl) {
       entry.audioEl = createScreenAudioElement(stream);
-      muteRemoteMicDuringScreenShare();
       console.log("Screen-Audio zugeordnet (via remoteScreenStreams)");
     }
     return;
@@ -614,14 +669,12 @@ function handleRemoteAudioTrack(track, stream) {
       if (entry) {
         if (!entry.audioEl) {
           entry.audioEl = createScreenAudioElement(stream);
-          muteRemoteMicDuringScreenShare();
         }
       } else if (retries > 0) {
         setTimeout(() => waitAndAssign(retries - 1), 150);
       } else {
         // Fallback: eigenes Audio-Element erstellen
         createScreenAudioElement(stream);
-        muteRemoteMicDuringScreenShare();
       }
     };
     waitAndAssign();
@@ -673,21 +726,19 @@ async function handleSignal(data) {
 
       // Mikrofon hinzufügen falls noch nicht vorhanden
       if (!localStream) {
-        const rawMicStream = await navigator.mediaDevices.getUserMedia({
+        localStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             googEchoCancellation: true,
             googEchoCancellation2: true,
+            googDAEchoCancellation: true,
             noiseSuppression: true,
-            autoGainControl: false,
+            autoGainControl: true,
+            googAutoGainControl: true,
             sampleRate: 48000,
             channelCount: 1
           }
         });
-
-        // Mikrofon-Boost anwenden
-        originalMicStream = rawMicStream;
-        localStream = await boostMicStream(rawMicStream);
 
         localStream.getTracks().forEach(track => {
           const sender = peerConnection.addTrack(track, localStream);
@@ -1081,6 +1132,24 @@ screenBtn.onclick = async () => {
 
     if (!gotAudio) {
       addSystemMessage("⚠️ System-Audio nicht verfügbar — nur Video wird übertragen");
+    } else {
+      // Loopback-Echo-Cancellation: Partner-Stimme softwareseitig aus dem
+      // WASAPI-Loopback herausrechnen, bevor es gesendet wird.
+      // Niemand wird stummgeschaltet — Kommunikation läuft normal weiter.
+      const remoteAudioEl = [...userAudioElements.values()][0];
+      if (remoteAudioEl?.srcObject && remoteAudioEl.srcObject.getAudioTracks().length > 0) {
+        try {
+          const loopStream = new MediaStream(screenStream.getAudioTracks());
+          const refStream  = new MediaStream(remoteAudioEl.srcObject.getAudioTracks());
+          const { ctx, processedStream } = createLoopbackAEC(loopStream, refStream);
+          screenAecContext         = ctx;
+          aecProcessedAudioTrack   = processedStream.getAudioTracks()[0];
+          addSystemMessage("🔊 Echo-Schutz aktiv (Loopback-AEC)");
+        } catch (e) {
+          console.error("AEC konnte nicht erstellt werden:", e);
+          aecProcessedAudioTrack = null;
+        }
+      }
     }
 
     // KERNFIX: Stream-ID VOR der Renegotiation an Gegenseite senden
@@ -1094,7 +1163,11 @@ screenBtn.onclick = async () => {
     isNegotiating = true;
     try {
       screenStream.getTracks().forEach(track => {
-        const sender = peerConnection.addTrack(track, screenStream);
+        // Audio: AEC-verarbeiteten Track senden statt rohem Loopback
+        const trackToSend = (track.kind === "audio" && aecProcessedAudioTrack)
+          ? aecProcessedAudioTrack
+          : track;
+        const sender = peerConnection.addTrack(trackToSend, screenStream);
 
         if (track.kind === "video") {
           try { track.contentHint = "detail"; } catch (e) { /* ignore */ }
@@ -1161,11 +1234,21 @@ function stopScreenShare() {
 
   const id = stream.id;
 
-  // Tracks aus PeerConnection entfernen
+  // Tracks aus PeerConnection entfernen —
+  // auch den AEC-processed Track berücksichtigen (nicht in stream.getTracks())
   if (peerConnection) {
+    const origTracks = new Set(stream.getTracks());
+    const aecTrack   = aecProcessedAudioTrack; // Referenz sichern bevor sie genullt wird
     peerConnection.getSenders()
-      .filter(s => s.track && stream.getTracks().includes(s.track))
+      .filter(s => s.track && (origTracks.has(s.track) || s.track === aecTrack))
       .forEach(s => { try { peerConnection.removeTrack(s); } catch (e) { /* ignore */ } });
+  }
+
+  // AEC-Kontext beenden (nach Sender-Entfernung)
+  if (screenAecContext) {
+    try { screenAecContext.close(); } catch (e) { /* ignore */ }
+    screenAecContext       = null;
+    aecProcessedAudioTrack = null;
   }
 
   stream.getTracks().forEach(t => t.stop());
@@ -1192,10 +1275,15 @@ function cleanup() {
   vadAnalysers.forEach((_, id) => stopVAD(id));
   vadAnalysers.clear();
 
-  // AudioContext schließen
+  // AudioContexts schließen
   if (micAudioContext) {
     try { micAudioContext.close(); } catch (e) { /* ignore */ }
     micAudioContext = null;
+  }
+  if (screenAecContext) {
+    try { screenAecContext.close(); } catch (e) { /* ignore */ }
+    screenAecContext       = null;
+    aecProcessedAudioTrack = null;
   }
   localStream?.getTracks().forEach(t => t.stop());
   localStream = null;
