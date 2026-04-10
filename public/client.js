@@ -1572,3 +1572,279 @@ audioDeviceModal.addEventListener("click", (e) => {
 // Aufräumen beim Schließen
 // ============================================================
 window.addEventListener("beforeunload", cleanup);
+
+// ============================================================
+// Screen Share Banner (neue Sidebar-ID referenzen)
+// ============================================================
+const screenBanner   = document.getElementById("screenBanner");
+const stopScreenWrap = document.getElementById("stopScreenWrap");
+
+// Patch: stopScreen-Wrap und Banner ein-/ausblenden
+const _origScreenBtnOff = stopScreenShare;
+// Wir überschreiben die show/hide-Logik direkt unten.
+
+// Patch: originale show/hide Stellen korrigieren ─────────────
+// Da client.js die Elemente direkt via style.display setzt,
+// synchronisieren wir den neuen Wrapper hier.
+(function patchScreenToggle() {
+  const orig = window.stopScreenShare || stopScreenShare;
+  // nicht mehr nötig — wir patchen über MutationObserver auf screenBtn.style
+  const obs = new MutationObserver(() => {
+    const screenHidden = screenBtn.style.display === "none";
+    if (stopScreenWrap) stopScreenWrap.style.display = screenHidden ? "flex" : "none";
+    if (screenBanner)   screenBanner.classList.toggle("visible", screenHidden);
+  });
+  obs.observe(screenBtn, { attributes: true, attributeFilter: ["style"] });
+})();
+
+// ============================================================
+// Call Timer
+// ============================================================
+let callTimerInterval = null;
+const callTimerEl     = document.getElementById("callTimer");
+
+function startCallTimer() {
+  if (callTimerInterval) return;
+  const start = Date.now();
+  if (callTimerEl) callTimerEl.classList.add("visible");
+  callTimerInterval = setInterval(() => {
+    const secs = Math.floor((Date.now() - start) / 1000);
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = secs % 60;
+    const p = n => String(n).padStart(2, "0");
+    if (callTimerEl) callTimerEl.textContent = h > 0 ? `${p(h)}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
+  }, 1000);
+}
+
+function stopCallTimer() {
+  if (callTimerInterval) { clearInterval(callTimerInterval); callTimerInterval = null; }
+  if (callTimerEl) { callTimerEl.textContent = "00:00"; callTimerEl.classList.remove("visible"); }
+}
+
+// Hook in startCall — Timer starten wenn Call beitritt
+const _origStartCall = startCall;
+// Wir patchen über das call-joined Event besser:
+// → In socket.on("call-joined") wird startCall aufgerufen.
+// → MutationObserver auf leaveBtn.disabled
+(function hookTimer() {
+  const obs = new MutationObserver(() => {
+    if (!leaveBtn.disabled && !callTimerInterval) startCallTimer();
+    if (leaveBtn.disabled && callTimerInterval)  stopCallTimer();
+  });
+  obs.observe(leaveBtn, { attributes: true, attributeFilter: ["disabled"] });
+})();
+
+// ============================================================
+// Push-to-Talk (Leertaste)
+// ============================================================
+let pttEnabled   = false;
+let pttActive    = false;
+const pttBtn     = document.getElementById("pttBtn");
+const pttBadgeEl = document.getElementById("pttBadge");
+const pttLabel   = document.getElementById("pttLabel");
+
+if (pttBtn) {
+  pttBtn.onclick = () => {
+    pttEnabled = !pttEnabled;
+    pttBtn.classList.toggle("active", pttEnabled);
+    if (pttLabel) pttLabel.textContent = pttEnabled ? "PTT: AN" : "PTT: AUS";
+    if (pttEnabled) {
+      // Mikro im PTT-Modus standardmäßig stumm
+      isMuted = true;
+      if (localStream) localStream.getAudioTracks().forEach(t => { t.enabled = false; });
+      muteBtn.classList.add("muted");
+      document.getElementById("muteIcon").innerHTML = '<path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.34 3 3 3 .23 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z"/>';
+    } else {
+      isMuted = false;
+      if (localStream) localStream.getAudioTracks().forEach(t => { t.enabled = true; });
+      muteBtn.classList.remove("muted");
+      document.getElementById("muteIcon").innerHTML = '<path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/>';
+    }
+  };
+}
+
+document.addEventListener("keydown", (e) => {
+  if (!pttEnabled || e.code !== "Space" || e.repeat) return;
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  e.preventDefault();
+  if (pttActive) return;
+  pttActive = true;
+  if (localStream) localStream.getAudioTracks().forEach(t => { t.enabled = true; });
+  if (pttBadgeEl) pttBadgeEl.classList.add("visible");
+});
+
+document.addEventListener("keyup", (e) => {
+  if (!pttEnabled || e.code !== "Space") return;
+  pttActive = false;
+  if (localStream) localStream.getAudioTracks().forEach(t => { t.enabled = false; });
+  if (pttBadgeEl) pttBadgeEl.classList.remove("visible");
+});
+
+// Hook enableButtons: PTT-Button mit aktivieren
+const _origEnableButtons = enableButtons;
+// Wir erweitern die Funktion
+(function () {
+  const orig = enableButtons;
+  window.enableButtons = function (on) {
+    orig(on);
+    if (pttBtn) pttBtn.disabled = !on;
+    if (!on && pttEnabled) {
+      pttEnabled = false;
+      if (pttBtn) pttBtn.classList.remove("active");
+      if (pttLabel) pttLabel.textContent = "PTT: AUS";
+      if (pttBadgeEl) pttBadgeEl.classList.remove("visible");
+    }
+  };
+})();
+
+// ============================================================
+// Emoji Reaktionen
+// ============================================================
+const EMOJIS     = ["❤️","😂","😮","👏","🔥","👍","🎮","💀","🌊","✨"];
+const emojiBtn   = document.getElementById("emojiBtn");
+const emojiPicker= document.getElementById("emojiPicker");
+const emojiOverlay = document.getElementById("emojiOverlay");
+
+// Picker aufbauen
+if (emojiPicker) {
+  EMOJIS.forEach(e => {
+    const btn = document.createElement("div");
+    btn.className = "emoji-opt";
+    btn.textContent = e;
+    btn.onclick = () => {
+      sendEmoji(e);
+      emojiPicker.classList.remove("visible");
+    };
+    emojiPicker.appendChild(btn);
+  });
+}
+
+if (emojiBtn) {
+  emojiBtn.onclick = (ev) => {
+    ev.stopPropagation();
+    emojiPicker?.classList.toggle("visible");
+  };
+}
+
+document.addEventListener("click", () => emojiPicker?.classList.remove("visible"));
+
+function sendEmoji(emoji) {
+  spawnFloatingEmoji(emoji);
+  if (socket) socket.emit("chat-message", emoji);
+}
+
+function spawnFloatingEmoji(emoji) {
+  if (!emojiOverlay) return;
+  const el = document.createElement("div");
+  el.className = "floating-emoji";
+  el.textContent = emoji;
+  el.style.left = (5 + Math.random() * 85) + "%";
+  el.style.bottom = "20%";
+  emojiOverlay.appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+
+// Eingehende Chat-Nachrichten: Falls nur Emoji → floaten
+const _origAddChatMessage = addChatMessage;
+// Wir erweitern:
+(function() {
+  const orig = addChatMessage;
+  window.addChatMessage = function(msg) {
+    orig(msg);
+    if (msg.id !== socket?.id && isEmojiOnly(msg.text)) {
+      spawnFloatingEmoji(msg.text);
+    }
+    // Ungelesen-Badge
+    updateChatUnread(1);
+  };
+})();
+
+function isEmojiOnly(str) {
+  return /^[\u{1F300}-\u{1FFFF}\u{2600}-\u{27BF}❤👍💀🌊✨\s]+$/u.test(str.trim()) && str.trim().length <= 8;
+}
+
+// Chat-Ungelesen-Badge
+let chatUnreadCount = 0;
+const chatUnreadEl  = document.getElementById("chatUnread");
+function updateChatUnread(delta) {
+  chatUnreadCount += delta;
+  if (chatUnreadEl) {
+    chatUnreadEl.textContent = chatUnreadCount;
+    chatUnreadEl.style.display = chatUnreadCount > 0 ? "inline-block" : "none";
+  }
+}
+// Badge zurücksetzen wenn Nutzer in Chat klickt
+document.getElementById("chatMessages")?.addEventListener("click", () => {
+  chatUnreadCount = 0;
+  if (chatUnreadEl) chatUnreadEl.style.display = "none";
+});
+
+// ============================================================
+// DBD Queue Panel (Sidebar)
+// ============================================================
+const dbdTimeEl    = document.getElementById("dbdTime");
+const dbdMetaEl    = document.getElementById("dbdMeta");
+const dbdRefreshEl = document.getElementById("dbdRefreshBtn");
+
+async function fetchDbdPanel() {
+  if (!dbdRefreshEl) return;
+  dbdRefreshEl.disabled = true;
+  if (dbdTimeEl) dbdTimeEl.innerHTML = '<span class="spin">↻</span>';
+  try {
+    const res  = await fetch("/api/killer-queue");
+    const data = await res.json();
+    if (data.error) {
+      if (dbdTimeEl) dbdTimeEl.textContent = "—";
+      if (dbdMetaEl) dbdMetaEl.textContent = data.error;
+    } else {
+      if (dbdTimeEl) dbdTimeEl.textContent = data.killerQueue;
+      if (dbdMetaEl) dbdMetaEl.textContent = data.mode ? "Modus: " + data.mode : "Live";
+    }
+  } catch (e) {
+    if (dbdTimeEl) dbdTimeEl.textContent = "—";
+    if (dbdMetaEl) dbdMetaEl.textContent = "Nicht erreichbar";
+  } finally {
+    if (dbdRefreshEl) dbdRefreshEl.disabled = false;
+  }
+}
+
+if (dbdRefreshEl) dbdRefreshEl.onclick = fetchDbdPanel;
+
+// Patch: queueBtn zeigt jetzt auch DBD-Panel an und aktualisiert es
+(function patchQueueBtn() {
+  const origClick = queueBtn.onclick;
+  queueBtn.onclick = async () => {
+    fetchDbdPanel();
+    if (origClick) origClick();
+  };
+})();
+
+// Auto-Refresh alle 2 Minuten
+setInterval(fetchDbdPanel, 120_000);
+// Initiales Laden
+fetchDbdPanel();
+
+// ============================================================
+// Participant Liste: neue CSS-Klassen verwenden
+// ============================================================
+(function patchParticipantsList() {
+  const orig = updateParticipantsList;
+  window.updateParticipantsList = function() {
+    if (!participantsList) return;
+    participantsList.innerHTML = "";
+    participants.forEach((data, id) => {
+      const isMe = id === socket?.id;
+      const avatarInner = data.profilePic
+        ? `<img src="${data.profilePic}" alt="${escapeHtml(data.username)}">`
+        : escapeHtml(data.username.charAt(0).toUpperCase());
+      const item = document.createElement("div");
+      item.className = "participant-item";
+      item.innerHTML = `
+        <div class="p-avatar">${avatarInner}</div>
+        <span class="p-name">${escapeHtml(data.username)}${isMe ? " (Du)" : ""}</span>
+      `;
+      participantsList.appendChild(item);
+    });
+  };
+})();
