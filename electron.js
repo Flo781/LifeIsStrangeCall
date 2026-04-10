@@ -169,10 +169,17 @@ function createWindow() {
 
         const response = { video: selectedSource };
 
-        // Windows: Loopback-Audio (System-Sound wird mitübertragen)
+        // Windows: Per-App-Audio für Fenster-Quellen (wie Discord) —
+        // erfasst NUR die ausgewählte Anwendung, kein WebRTC-Audio → kein Echo!
+        // Für ganze Bildschirme: System-Loopback (kein Per-App möglich).
         if (result.withAudio && process.platform === "win32") {
-          response.audio = "loopback";
-          console.log("Screen Share: Windows Loopback-Audio aktiviert ✓");
+          if (selectedSource.id.startsWith("window:")) {
+            response.audio = selectedSource; // Per-Prozess-Audio (Windows 10 2004+)
+            console.log("Screen Share: Per-App-Audio aktiv ✓ (kein Echo)");
+          } else {
+            response.audio = "loopback"; // Ganzer Bildschirm → System-Loopback
+            console.log("Screen Share: System-Loopback aktiv");
+          }
         }
         // macOS: BlackHole wird als separates Mikrofon im Renderer verwendet
         // (BlackHole-DeviceId wird vom Picker mitgegeben)

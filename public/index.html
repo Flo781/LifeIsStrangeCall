@@ -1,1247 +1,676 @@
 <!DOCTYPE html>
-<html>
+<html lang="de">
 <head>
-  <title>Life is Strange Call</title>
-  <link rel="icon" type="image/png" href="/assets/icons/Adobe%20Express%20-%20file.png">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LifeIsStrangeCall</title>
+  <link rel="icon" href="/assets/icons/Adobe%20Express%20-%20file.png">
+
+  <!-- PrimeVue 3 + Icons + PrimeFlex -->
+  <link rel="stylesheet" href="https://unpkg.com/primevue@3/resources/themes/lara-dark-purple/theme.css">
+  <link rel="stylesheet" href="https://unpkg.com/primevue@3/resources/primevue.min.css">
+  <link rel="stylesheet" href="https://unpkg.com/primeicons/primeicons.css">
+  <link rel="stylesheet" href="https://unpkg.com/primeflex@3/primeflex.css">
+
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
+    /* ── Basis ───────────────────────────────────────────────── */
+    :root {
+      --lis-bg:       #1a1f2e;
+      --lis-surface:  #232a3b;
+      --lis-card:     #2a3347;
+      --lis-border:   #3a4560;
+      --lis-accent:   #e94560;
+      --lis-accent2:  #c89b7b;
+      --lis-green:    #4ade80;
+      --lis-text:     #e2e8f0;
+      --lis-muted:    #8899aa;
+      --lis-radius:   12px;
+      /* PrimeVue overrides */
+      --primary-color: #e94560 !important;
+      --primary-color-text: #fff !important;
     }
 
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
     body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background: linear-gradient(180deg, #5f6f83 0%, #516175 100%);
-      color: #fff;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--lis-bg);
+      color: var(--lis-text);
       height: 100vh;
       display: flex;
       flex-direction: column;
       overflow: hidden;
       cursor: url('/assets/cursor/Cursor%20LiS/Arrow.cur'), auto;
+      user-select: none;
     }
 
-    /* Header */
+    /* ── Scrollbar ───────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--lis-border); border-radius: 3px; }
+
+    /* ── PrimeVue overrides ──────────────────────────────────── */
+    .p-button { border-radius: 8px !important; font-family: inherit !important; }
+    .p-button.p-button-icon-only { border-radius: 50% !important; width: 42px !important; height: 42px !important; }
+    .p-button.p-button-sm.p-button-icon-only { width: 34px !important; height: 34px !important; }
+    .p-dialog { border-radius: var(--lis-radius) !important; background: var(--lis-surface) !important; border: 1px solid var(--lis-border) !important; }
+    .p-dialog .p-dialog-header { background: var(--lis-surface) !important; border-bottom: 1px solid var(--lis-border) !important; border-radius: var(--lis-radius) var(--lis-radius) 0 0 !important; }
+    .p-dialog .p-dialog-content { background: var(--lis-surface) !important; }
+    .p-dialog .p-dialog-footer { background: var(--lis-surface) !important; border-top: 1px solid var(--lis-border) !important; border-radius: 0 0 var(--lis-radius) var(--lis-radius) !important; }
+    .p-inputtext { background: var(--lis-card) !important; border-color: var(--lis-border) !important; color: var(--lis-text) !important; border-radius: 8px !important; }
+    .p-inputtext:focus { border-color: var(--lis-accent) !important; box-shadow: 0 0 0 2px rgba(233,69,96,.2) !important; }
+    .p-slider { background: var(--lis-border) !important; }
+    .p-slider .p-slider-handle { background: var(--lis-accent) !important; border-color: var(--lis-accent) !important; }
+    .p-slider .p-slider-range { background: var(--lis-accent) !important; }
+    .p-toast { z-index: 9999 !important; }
+    .p-toast .p-toast-message { background: var(--lis-surface) !important; border-left: 4px solid var(--lis-accent) !important; }
+    .p-toast .p-toast-message.p-toast-message-success { border-left-color: var(--lis-green) !important; }
+
+    /* ── Header ─────────────────────────────────────────────── */
     .header {
-      background: #6a7a8e;
-      padding: 14px 20px;
+      background: var(--lis-surface);
+      border-bottom: 1px solid var(--lis-border);
+      padding: 8px 20px;
       display: flex;
       align-items: center;
-      justify-content: center;
-      border-bottom: 1px solid #7d8d9e;
+      justify-content: space-between;
       flex-shrink: 0;
-      position: relative;
+      height: 64px;
     }
-
-    .header h1 {
-      font-size: 18px;
-      font-weight: 600;
-      color: #e94560;
+    .header-logo { height: 44px; object-fit: contain; }
+    .header-center { display: flex; align-items: center; gap: 16px; }
+    .call-timer {
+      font-size: 13px; color: var(--lis-green);
+      background: rgba(74,222,128,.1);
+      border: 1px solid rgba(74,222,128,.25);
+      border-radius: 20px; padding: 3px 12px;
+      font-variant-numeric: tabular-nums;
     }
-
-    .header .logo {
-      height: 90px;
-      object-fit: contain;
+    .network-badge {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 12px; padding: 3px 10px;
+      border-radius: 20px; border: 1px solid;
     }
+    .network-badge.good   { color: var(--lis-green); border-color: rgba(74,222,128,.3); background: rgba(74,222,128,.08); }
+    .network-badge.medium { color: #fbbf24; border-color: rgba(251,191,36,.3); background: rgba(251,191,36,.08); }
+    .network-badge.poor   { color: var(--lis-accent); border-color: rgba(233,69,96,.3); background: rgba(233,69,96,.08); }
+    .network-badge.unknown{ color: var(--lis-muted); border-color: var(--lis-border); }
+    .conn-status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--lis-muted); }
+    .status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--lis-muted); transition: .3s; }
+    .status-dot.connected { background: var(--lis-green); box-shadow: 0 0 8px var(--lis-green); }
 
-    .connection-status {
-      position: absolute;
-      right: 20px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-      color: #888;
-    }
+    /* ── Layout ─────────────────────────────────────────────── */
+    .app-container { flex: 1; display: flex; overflow: hidden; }
 
-    .status-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: #888;
-    }
-
-    .status-dot.connected {
-      background: #4ade80;
-      box-shadow: 0 0 8px #4ade80;
-    }
-
-    /* App Layout */
-    .app-container {
-      flex: 1;
-      display: flex;
-      overflow: hidden;
-      position: relative;
-    }
-
-    .app-container::before {
-      content: '';
-      position: absolute;
-      right: 360px;
-      bottom: 90px;
-      width: 260px;
-      height: 260px;
-      background: url('/assets/sticker/pngaaa.com-65825.png') center/contain no-repeat;
-      opacity: 0.45;
-      pointer-events: none;
-      z-index: 3;
-    }
-
-    /* Main Content */
     .main-content {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      padding: 16px;
-      gap: 16px;
-      min-width: 0;
-      position: relative;
-      z-index: 1;
-      background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
+      flex: 1; display: flex; flex-direction: column;
+      padding: 12px; gap: 12px; min-width: 0; position: relative;
+      background: linear-gradient(180deg, rgba(255,255,255,.03) 0%, transparent 100%);
     }
 
-    /* Video Grid */
-    .video-grid {
-      flex: 1;
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-      gap: 16px;
-      min-height: 200px;
-      overflow: auto;
+    /* ── Video Grid ──────────────────────────────────────────── */
+    #video-grid {
+      flex: 1; display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 12px; min-height: 0; overflow: auto;
+      align-content: start;
     }
-
     .video-container {
-      position: relative;
-      background: #4a5a6e;
-      border-radius: 12px;
-      overflow: hidden;
-      aspect-ratio: 16/9;
-      border: 2px solid #7d8d9e;
+      position: relative; background: var(--lis-card);
+      border-radius: var(--lis-radius); overflow: hidden;
+      aspect-ratio: 16/9; border: 2px solid var(--lis-border);
       cursor: url('/assets/cursor/Cursor%20LiS/Hand.cur'), pointer;
-      transition: border-color 0.2s;
+      transition: border-color .2s;
     }
-
-    .video-container:hover {
-      border-color: #e94560;
+    .video-container:hover { border-color: var(--lis-accent); }
+    .video-container video { width: 100%; height: 100%; object-fit: contain; }
+    .video-label {
+      position: absolute; bottom: 10px; left: 10px;
+      background: rgba(0,0,0,.65); backdrop-filter: blur(6px);
+      border-radius: 8px; padding: 4px 10px;
+      font-size: 12px; font-weight: 500; display: flex; align-items: center; gap: 6px;
     }
+    .fullscreen-hint {
+      position: absolute; top: 10px; right: 10px;
+      background: rgba(0,0,0,.5); border-radius: 6px;
+      padding: 3px 8px; font-size: 11px; color: #aaa; opacity: 0;
+      transition: opacity .2s; pointer-events: none;
+    }
+    .video-container:hover .fullscreen-hint { opacity: 1; }
+    .screen-audio-vol {
+      position: absolute; top: 10px; left: 10px;
+      background: rgba(0,0,0,.6); backdrop-filter: blur(6px);
+      border-radius: 8px; padding: 6px 10px;
+      display: flex; align-items: center; gap: 8px; font-size: 12px;
+    }
+    .screen-audio-vol .p-slider { width: 80px; }
 
-    /* User Tile (Audio-only User wie bei Discord) */
+    /* ── User Tile ───────────────────────────────────────────── */
     .user-tile {
-      position: relative;
-      background: linear-gradient(135deg, #6a7a8e 0%, #7a8a9e 100%);
-      border-radius: 12px;
-      overflow: hidden;
-      aspect-ratio: 1/1;
-      min-width: 150px;
-      max-width: 200px;
-      border: 2px solid #7d8d9e;
+      position: relative; background: linear-gradient(135deg, var(--lis-card), var(--lis-surface));
+      border-radius: var(--lis-radius); overflow: hidden;
+      aspect-ratio: 1/1; min-width: 140px; max-width: 190px;
+      border: 2px solid var(--lis-border);
       cursor: url('/assets/cursor/Cursor%20LiS/Hand.cur'), pointer;
-      transition: border-color 0.2s, transform 0.2s;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
+      transition: border-color .2s, transform .2s, box-shadow .2s;
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 10px;
     }
-
-    .user-tile:hover {
-      border-color: #e94560;
-      transform: scale(1.02);
-    }
-
+    .user-tile:hover { border-color: var(--lis-accent); transform: scale(1.02); }
     .user-tile.speaking {
-      border-color: #4ade80;
-      box-shadow: 0 0 20px rgba(74, 222, 128, 0.3);
+      border-color: var(--lis-green);
+      box-shadow: 0 0 20px rgba(74,222,128,.3);
     }
-
+    .speaking-ring {
+      position: absolute; inset: -3px; border-radius: 14px;
+      border: 3px solid var(--lis-green); opacity: 0;
+      transition: opacity .3s;
+    }
+    .user-tile.speaking .speaking-ring { opacity: 1; }
     .user-tile .avatar {
-      width: 80px;
-      height: 80px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, #e94560, #7d8d9e);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 36px;
-      font-weight: 600;
-      color: #fff;
-      text-transform: uppercase;
+      width: 72px; height: 72px; border-radius: 50%;
+      overflow: hidden; border: 2px solid rgba(255,255,255,.15);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 32px; font-weight: 700; background: linear-gradient(135deg, var(--lis-accent), #7d8d9e);
+    }
+    .user-tile .avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .user-tile .tile-name { font-size: 13px; font-weight: 500; max-width: 90%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tile-badges { position: absolute; bottom: 8px; right: 8px; display: flex; gap: 4px; }
+    .tile-badge {
+      width: 26px; height: 26px; border-radius: 50%;
+      background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center;
+      font-size: 13px;
     }
 
-    .user-tile .username {
-      font-size: 14px;
-      font-weight: 500;
-      color: #fff;
-      max-width: 90%;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      text-align: center;
+    /* ── Empty State ─────────────────────────────────────────── */
+    .empty-state {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 16px;
+      color: var(--lis-muted);
     }
+    .empty-state i { font-size: 3.5rem; opacity: .4; }
+    .empty-state p { font-size: 15px; opacity: .6; }
 
-    .user-tile .status-icons {
-      position: absolute;
-      bottom: 10px;
-      right: 10px;
-      display: flex;
-      gap: 6px;
-    }
-
-    .user-tile .status-icon {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      background: rgba(0,0,0,0.6);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .user-tile .status-icon svg {
-      width: 16px;
-      height: 16px;
-      fill: #fff;
-    }
-
-    .user-tile .status-icon.muted svg {
-      fill: #e94560;
-    }
-
-    .user-tile .speaking-ring {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      width: 100px;
-      height: 100px;
-      border-radius: 50%;
-      border: 3px solid #4ade80;
-      opacity: 0;
-      animation: speakingPulse 1.5s ease-out infinite;
-    }
-
-    .user-tile.speaking .speaking-ring {
-      opacity: 1;
-    }
-
-    @keyframes speakingPulse {
-      0% { transform: translate(-50%, -50%) scale(0.8); opacity: 0.8; }
-      100% { transform: translate(-50%, -50%) scale(1.3); opacity: 0; }
-    }
-
-    .video-container:fullscreen {
-      border-radius: 0;
-      border: none;
-    }
-
-    .video-container .fullscreen-hint {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: rgba(0,0,0,0.8);
-      padding: 12px 20px;
-      border-radius: 8px;
-      font-size: 14px;
-      opacity: 0;
-      transition: opacity 0.2s;
+    /* ── Emoji overlay ───────────────────────────────────────── */
+    .emoji-overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 20; }
+    .floating-emoji {
+      position: absolute; font-size: 36px;
+      animation: floatUp 3s ease-out forwards;
       pointer-events: none;
     }
-
-    .video-container:hover .fullscreen-hint {
-      opacity: 1;
+    @keyframes floatUp {
+      0%   { transform: translateY(0) scale(1); opacity: 1; }
+      80%  { opacity: 1; }
+      100% { transform: translateY(-200px) scale(1.3); opacity: 0; }
     }
 
-    .video-container:fullscreen .fullscreen-hint,
-    .video-container:fullscreen .label,
-    .video-container:fullscreen .volume-control {
-      display: none;
+    /* ── Sidebar ─────────────────────────────────────────────── */
+    .sidebar {
+      width: 300px; flex-shrink: 0;
+      background: var(--lis-surface);
+      border-left: 1px solid var(--lis-border);
+      display: flex; flex-direction: column; overflow: hidden;
     }
 
-    .video-container video {
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-    }
+    .sidebar-section { padding: 12px; border-bottom: 1px solid var(--lis-border); }
+    .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--lis-muted); font-weight: 600; margin-bottom: 8px; }
 
-    .video-container .label {
-      position: absolute;
-      bottom: 10px;
-      left: 10px;
-      background: rgba(0,0,0,0.7);
-      padding: 6px 12px;
-      border-radius: 6px;
-      font-size: 13px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
+    /* DBD Queue card */
+    .queue-card { text-align: center; }
+    .queue-time { font-size: 28px; font-weight: 700; color: var(--lis-accent2); letter-spacing: 1px; margin: 4px 0; min-height: 36px; }
+    .queue-meta { font-size: 11px; color: var(--lis-muted); margin-bottom: 8px; }
 
-    .video-container .label .audio-hint {
-      margin-left: 4px;
-      font-size: 12px;
-    }
-
-    /* Volume Control - removed, using context menu instead */
-    .video-container .label .speaking-indicator {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #888;
-    }
-
-    .video-container .label .speaking-indicator.active {
-      background: #4ade80;
-      animation: pulse 1s infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
-    }
-
-    /* Chat Sidebar */
-    .chat-sidebar {
-      width: 320px;
-      background: rgba(67, 81, 99, 0.9);
-      border-left: 1px solid #7d8d9e;
-      display: flex;
-      flex-direction: column;
-      flex-shrink: 0;
-      position: relative;
-      z-index: 1;
-      backdrop-filter: blur(6px);
-    }
-
-    /* Participants Panel */
-    .participants-panel {
-      border-bottom: 1px solid #7d8d9e;
-      max-height: 200px;
-      overflow-y: auto;
-    }
-
-    .participants-header {
-      padding: 12px 16px;
-      font-size: 12px;
-      text-transform: uppercase;
-      color: #888;
-      letter-spacing: 0.5px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .participants-header .count {
-      background: #e94560;
-      color: #fff;
-      padding: 2px 6px;
-      border-radius: 10px;
-      font-size: 10px;
-    }
-
+    /* Participants */
     .participant-item {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 8px 16px;
-      cursor: url('/assets/cursor/Cursor%20LiS/Hand.cur'), pointer;
-      transition: background 0.2s;
+      display: flex; align-items: center; gap: 10px;
+      padding: 6px 8px; border-radius: 8px; transition: background .15s;
     }
-
-    .participant-item:hover {
-      background: #7a8a9e;
+    .participant-item:hover { background: var(--lis-card); }
+    .participant-avatar {
+      width: 32px; height: 32px; border-radius: 50%;
+      overflow: hidden; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 14px; background: linear-gradient(135deg, var(--lis-accent), #7d8d9e);
     }
+    .participant-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .participant-name { font-size: 13px; flex: 1; }
+    .participant-icons { display: flex; gap: 4px; }
+    .participant-icon { font-size: 12px; color: var(--lis-muted); }
+    .participant-item.speaking .participant-name { color: var(--lis-green); }
 
-    .participant-item .avatar {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, #e94560, #7d8d9e);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      font-weight: 600;
-      flex-shrink: 0;
-    }
+    /* Chat */
+    .chat-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    .chat-title { padding: 10px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--lis-muted); font-weight: 600; border-bottom: 1px solid var(--lis-border); flex-shrink: 0; }
+    .chat-messages { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+    .chat-msg { border-radius: 8px; padding: 6px 10px; max-width: 95%; }
+    .chat-msg.own { background: rgba(233,69,96,.15); border: 1px solid rgba(233,69,96,.2); align-self: flex-end; }
+    .chat-msg.other { background: var(--lis-card); border: 1px solid var(--lis-border); align-self: flex-start; }
+    .chat-msg.system { background: rgba(136,153,170,.08); border: 1px solid rgba(136,153,170,.15); align-self: center; font-size: 11px; color: var(--lis-muted); }
+    .chat-meta { font-size: 10px; color: var(--lis-muted); margin-bottom: 2px; }
+    .chat-text { font-size: 13px; word-break: break-word; }
+    .chat-input-row { padding: 8px; display: flex; gap: 6px; border-top: 1px solid var(--lis-border); flex-shrink: 0; }
+    .chat-input-row .p-inputtext { flex: 1; font-size: 13px; padding: 6px 10px !important; }
 
-    .participant-item .avatar.speaking {
-      box-shadow: 0 0 0 2px #4ade80;
-    }
-
-    .participant-item .name {
-      flex: 1;
-      font-size: 13px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .participant-item .name.you {
-      color: #4ade80;
-    }
-
-    .participant-item .volume-display {
-      font-size: 11px;
-      color: #888;
-      min-width: 35px;
-      text-align: right;
-    }
-
-    .participant-item .icons {
-      display: flex;
-      gap: 4px;
-    }
-
-    .participant-item .icons svg {
-      width: 14px;
-      height: 14px;
-      fill: #666;
-    }
-
-    .participant-item .icons svg.active {
-      fill: #4ade80;
-    }
-
-    .participant-item .icons svg.muted {
-      fill: #e94560;
-    }
-
-    /* Context Menu */
-    .context-menu {
-      position: fixed;
-      background: #6a7a8e;
-      border: 1px solid #7d8d9e;
-      border-radius: 8px;
-      padding: 8px 0;
-      min-width: 200px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-      z-index: 2000;
-      display: none;
-    }
-
-    .context-menu.visible {
-      display: block;
-    }
-
-    .context-menu-item {
-      padding: 10px 16px;
-      cursor: url('/assets/cursor/Cursor%20LiS/Hand.cur'), pointer;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 13px;
-      transition: background 0.2s;
-    }
-
-    .context-menu-item:hover {
-      background: #7a8a9e;
-    }
-
-    .context-menu-item svg {
-      width: 16px;
-      height: 16px;
-      fill: #888;
-    }
-
-    .context-menu-item.danger {
-      color: #e94560;
-    }
-
-    .context-menu-item.danger svg {
-      fill: #e94560;
-    }
-
-    .context-menu-divider {
-      height: 1px;
-      background: #7d8d9e;
-      margin: 8px 0;
-    }
-
-    .context-menu-volume {
-      padding: 10px 16px;
-    }
-
-    .context-menu-volume label {
-      display: block;
-      font-size: 11px;
-      color: #888;
-      margin-bottom: 8px;
-    }
-
-    .context-menu-volume .volume-slider-container {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .context-menu-volume input[type="range"] {
-      flex: 1;
-      height: 6px;
-      -webkit-appearance: none;
-      appearance: none;
-      background: #444;
-      border-radius: 3px;
-      cursor: url('/assets/cursor/Cursor%20LiS/Hand.cur'), pointer;
-    }
-
-    .context-menu-volume input[type="range"]::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      appearance: none;
-      width: 16px;
-      height: 16px;
-      background: #e94560;
-      border-radius: 50%;
-      cursor: url('/assets/cursor/Cursor%20LiS/Hand.cur'), pointer;
-    }
-
-    .context-menu-volume input[type="range"]::-moz-range-thumb {
-      width: 16px;
-      height: 16px;
-      background: #e94560;
-      border-radius: 50%;
-      cursor: url('/assets/cursor/Cursor%20LiS/Hand.cur'), pointer;
-      border: none;
-    }
-
-    .context-menu-volume .volume-value {
-      font-size: 12px;
-      min-width: 40px;
-      text-align: right;
-    }
-
-    .chat-header {
-      padding: 16px;
-      border-bottom: 1px solid #7d8d9e;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .chat-header h3 {
-      font-size: 14px;
-      font-weight: 600;
-      color: #fff;
-    }
-
-    .chat-toggle {
-      background: none;
-      border: none;
-      cursor: url('/assets/cursor/Cursor%20LiS/Hand.cur'), pointer;
-      padding: 4px;
-    }
-
-    .chat-toggle svg {
-      width: 20px;
-      height: 20px;
-      fill: #888;
-    }
-
-    .chat-messages {
-      flex: 1;
-      overflow-y: auto;
-      padding: 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .chat-message {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .chat-message .meta {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .chat-message .username {
-      font-size: 13px;
-      font-weight: 600;
-      color: #e94560;
-    }
-
-    .chat-message .time {
-      font-size: 11px;
-      color: #3f4b5b;
-    }
-
-    .chat-message .text {
-      font-size: 14px;
-      color: #1f2937;
-      line-height: 1.4;
-      word-wrap: break-word;
-      background: rgba(255, 255, 255, 0.88);
-      border: 1px solid rgba(255, 255, 255, 0.45);
-      border-radius: 10px;
-      padding: 8px 10px;
-      width: fit-content;
-      max-width: 100%;
-    }
-
-    .chat-message.system {
-      text-align: center;
-    }
-
-    .chat-message.system .text {
-      font-size: 12px;
-      color: #374151;
-      font-style: italic;
-      background: transparent;
-      border: none;
-      padding: 0;
-      width: auto;
-    }
-
-    .chat-input-container {
-      padding: 16px;
-      border-top: 1px solid #7d8d9e;
-    }
-
-    .chat-input-wrapper {
-      display: flex;
-      gap: 8px;
-      background: rgba(23, 34, 50, 0.78);
-      border: 1px solid rgba(125, 141, 158, 0.6);
-      border-radius: 8px;
-      padding: 8px 12px;
-    }
-
-    .chat-input {
-      flex: 1;
-      background: none;
-      border: none;
-      color: #fff;
-      font-size: 14px;
-      outline: none;
-    }
-
-    .chat-input::placeholder {
-      color: #666;
-    }
-
-    .chat-send {
-      background: #e94560;
-      border: none;
-      border-radius: 6px;
-      padding: 6px 12px;
-      cursor: url('/assets/cursor/Cursor%20LiS/Hand.cur'), pointer;
-      transition: background 0.2s;
-    }
-
-    .chat-send:hover {
-      background: #ff6b8a;
-    }
-
-    .chat-send svg {
-      width: 18px;
-      height: 18px;
-      fill: #fff;
-    }
-
-    /* Control Bar */
+    /* ── Control Bar ─────────────────────────────────────────── */
     .control-bar {
-      background: rgba(67, 81, 99, 0.86);
-      border: 1px solid rgba(125, 141, 158, 0.7);
-      backdrop-filter: blur(6px);
-      border-radius: 12px;
-      padding: 12px;
-      display: flex;
-      justify-content: center;
-      gap: 10px;
-      flex-shrink: 0;
+      background: var(--lis-surface);
+      border-top: 1px solid var(--lis-border);
+      padding: 10px 20px;
+      display: flex; align-items: center; justify-content: center;
+      gap: 8px; flex-shrink: 0; flex-wrap: wrap;
     }
+    .ctrl-divider { width: 1px; height: 30px; background: var(--lis-border); margin: 0 4px; }
+    .ctrl-group { display: flex; align-items: center; gap: 6px; }
 
-    .control-btn {
-      width: 46px;
-      height: 46px;
-      border-radius: 50%;
-      border: none;
-      cursor: url('/assets/cursor/Cursor%20LiS/Hand.cur'), pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: all 0.2s;
-      background: #2f3a4e;
-    }
-
-    .control-btn:hover {
-      background: #38475f;
-      transform: scale(1.06);
-    }
-
-    .control-btn svg {
-      width: 20px;
-      height: 20px;
-      fill: #fff;
-    }
-
-    .control-btn.active {
-      background: #4ade80;
-    }
-
-    .control-btn.active svg {
-      fill: #000;
-    }
-
-    .control-btn.danger {
-      background: #e94560;
-    }
-
-    .control-btn.danger:hover {
-      background: #ff6b8a;
-    }
-
-    .control-btn.muted {
-      background: #e94560;
-    }
-
-    .control-btn:disabled {
-      opacity: 0.5;
-      cursor: url('/assets/cursor/Cursor%20LiS/NO.cur'), not-allowed;
-    }
-
-    /* Quality Selector */
-    .quality-wrapper {
-      position: relative;
-      display: flex;
-      align-items: center;
-    }
-
-    .quality-btn {
-      width: 46px;
-      height: 46px;
-      border-radius: 50%;
-      border: none;
-      cursor: url('/assets/cursor/Cursor%20LiS/Hand.cur'), pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: all 0.2s;
-      background: #2f3a4e;
-      position: relative;
-    }
-
-    .quality-btn:hover {
-      background: #38475f;
-      transform: scale(1.06);
-    }
-
-    .quality-btn svg {
-      width: 20px;
-      height: 20px;
-      fill: #fff;
-    }
-
-    .quality-btn .quality-badge {
-      position: absolute;
-      bottom: -2px;
-      right: -2px;
-      background: #4ade80;
-      color: #000;
-      font-size: 8px;
-      font-weight: 700;
-      padding: 1px 4px;
-      border-radius: 6px;
-      line-height: 1.2;
-    }
-
-    .quality-dropdown {
-      position: absolute;
-      bottom: 56px;
-      left: 50%;
+    /* PTT indicator */
+    .ptt-badge {
+      position: fixed; bottom: 80px; left: 50%;
       transform: translateX(-50%);
-      background: rgba(47, 58, 78, 0.96);
-      border: 1px solid rgba(125, 141, 158, 0.5);
-      backdrop-filter: blur(10px);
-      border-radius: 10px;
-      padding: 6px;
-      display: none;
-      flex-direction: column;
-      gap: 2px;
-      min-width: 150px;
-      z-index: 200;
+      background: var(--lis-accent); color: #fff;
+      padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 600;
+      box-shadow: 0 4px 16px rgba(233,69,96,.4);
+      z-index: 100; pointer-events: none;
+      animation: pttPulse .6s ease infinite alternate;
+    }
+    @keyframes pttPulse { from { box-shadow: 0 4px 16px rgba(233,69,96,.4); } to { box-shadow: 0 4px 24px rgba(233,69,96,.7); } }
+
+    /* Emoji picker */
+    .emoji-picker-wrap { position: relative; }
+    .emoji-picker {
+      position: absolute; bottom: calc(100% + 10px); left: 50%;
+      transform: translateX(-50%);
+      background: var(--lis-surface); border: 1px solid var(--lis-border);
+      border-radius: var(--lis-radius); padding: 10px;
+      display: grid; grid-template-columns: repeat(5, 1fr);
+      gap: 6px; z-index: 50; box-shadow: 0 8px 30px rgba(0,0,0,.4);
+    }
+    .emoji-btn { font-size: 22px; cursor: pointer; padding: 4px; border-radius: 6px; text-align: center; transition: background .15s; }
+    .emoji-btn:hover { background: var(--lis-card); }
+
+    /* Quality dropdown */
+    .quality-drop {
+      position: absolute; bottom: calc(100% + 10px); left: 50%;
+      transform: translateX(-50%);
+      background: var(--lis-surface); border: 1px solid var(--lis-border);
+      border-radius: var(--lis-radius); overflow: hidden; z-index: 50;
+      box-shadow: 0 8px 30px rgba(0,0,0,.4); min-width: 120px;
+    }
+    .quality-item { padding: 9px 16px; font-size: 13px; cursor: pointer; transition: background .15s; }
+    .quality-item:hover { background: var(--lis-card); }
+    .quality-item.active { color: var(--lis-accent); font-weight: 600; }
+
+    /* Screen share info bar */
+    .screen-info-bar {
+      background: rgba(233,69,96,.12); border: 1px solid rgba(233,69,96,.25);
+      border-radius: 8px; padding: 6px 14px;
+      font-size: 12px; display: flex; align-items: center; gap: 8px;
+      color: var(--lis-accent);
     }
 
-    .quality-dropdown.visible {
-      display: flex;
-    }
-
-    .quality-option {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 8px 12px;
-      border-radius: 6px;
-      border: none;
-      background: transparent;
-      color: #ccc;
-      font-size: 13px;
-      cursor: url('/assets/cursor/Cursor%20LiS/Hand.cur'), pointer;
-      transition: all 0.15s;
-      font-family: inherit;
-    }
-
-    .quality-option:hover {
-      background: rgba(255,255,255,0.1);
-      color: #fff;
-    }
-
-    .quality-option.selected {
-      background: rgba(74, 222, 128, 0.15);
-      color: #4ade80;
-    }
-
-    .quality-option .q-label {
-      font-weight: 600;
-    }
-
-    .quality-option .q-detail {
-      font-size: 11px;
-      opacity: 0.6;
-    }
-
-    /* Stats Overlay */
+    /* Stats overlay */
     .stats-overlay {
-      position: fixed;
-      top: 60px;
-      right: 340px;
-      background: rgba(0,0,0,0.9);
-      padding: 12px 16px;
-      border-radius: 8px;
-      font-size: 12px;
-      font-family: monospace;
-      display: none;
-      z-index: 100;
+      position: fixed; top: 70px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(26,31,46,.92); backdrop-filter: blur(12px);
+      border: 1px solid var(--lis-border); border-radius: var(--lis-radius);
+      padding: 14px 24px; font-family: 'Courier New', monospace;
+      font-size: 12px; z-index: 80; min-width: 220px;
     }
+    .stats-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--lis-accent); margin-bottom: 10px; }
+    .stats-row { display: flex; justify-content: space-between; gap: 24px; padding: 2px 0; color: var(--lis-muted); }
+    .stats-row span:last-child { color: var(--lis-text); font-weight: 600; }
 
-    .stats-overlay.visible {
-      display: block;
+    /* Context menu */
+    .ctx-menu {
+      position: fixed; background: var(--lis-surface);
+      border: 1px solid var(--lis-border); border-radius: 10px;
+      padding: 8px; box-shadow: 0 8px 30px rgba(0,0,0,.5);
+      z-index: 200; min-width: 200px;
     }
+    .ctx-item { padding: 8px 12px; border-radius: 6px; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: background .15s; }
+    .ctx-item:hover { background: var(--lis-card); }
+    .ctx-vol-row { padding: 8px 12px; }
+    .ctx-vol-label { font-size: 11px; color: var(--lis-muted); margin-bottom: 6px; display: flex; justify-content: space-between; }
 
-    .stats-overlay .stat {
-      display: flex;
-      justify-content: space-between;
-      gap: 20px;
-      margin-bottom: 4px;
-    }
-
-    .stats-overlay .stat .value {
-      color: #4ade80;
-    }
-
-    /* Empty State */
-    .empty-state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      color: #666;
-    }
-
-    .empty-state svg {
-      width: 80px;
-      height: 80px;
-      fill: #333;
-      margin-bottom: 16px;
-    }
-
-    .empty-state p {
-      font-size: 14px;
-    }
-
-    /* Username Modal */
-    .modal-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: url('/assets/Wallpaper/wallpaperflare.com_wallpaper.jpg') center/cover no-repeat;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1000;
-      overflow: hidden;
-    }
-
-    .modal-overlay::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(255, 255, 255, 0.15);
-    }
-
-    .modal-overlay.hidden {
-      display: none;
-    }
-
-    .modal {
-      background: transparent;
-      padding: 40px;
-      text-align: center;
-      position: relative;
-      z-index: 1;
-    }
-
-    .profile-selection {
-      display: flex;
-      justify-content: center;
-      gap: 24px;
-    }
-
-    .profile-option {
+    /* Profile modal cards */
+    .profile-grid { display: flex; gap: 16px; justify-content: center; padding: 16px 0; }
+    .profile-card {
+      background: var(--lis-card); border: 2px solid var(--lis-border);
+      border-radius: var(--lis-radius); padding: 20px; cursor: pointer;
+      transition: all .2s; text-align: center; width: 150px;
       cursor: url('/assets/cursor/Cursor%20LiS/Hand.cur'), pointer;
-      transition: transform 0.2s, box-shadow 0.2s;
-      text-align: center;
+    }
+    .profile-card:hover { border-color: var(--lis-accent); transform: translateY(-3px); }
+    .profile-card img { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; margin-bottom: 10px; }
+    .profile-card .p-name { font-weight: 600; font-size: 15px; }
+
+    /* Decorative sticker */
+    .sticker-deco {
+      position: absolute; right: 320px; bottom: 80px;
+      width: 220px; height: 220px;
+      background: url('/assets/sticker/pngaaa.com-65825.png') center/contain no-repeat;
+      opacity: .35; pointer-events: none; z-index: 0;
     }
 
-    .profile-option:hover {
-      transform: scale(1.05);
-    }
-
-    .profile-option img {
-      width: 120px;
-      height: 120px;
-      border-radius: 50%;
-      border: 4px solid #2a2a4a;
-      object-fit: cover;
-      transition: border-color 0.2s;
-    }
-
-    .profile-option:hover img {
-      border-color: #e94560;
-      box-shadow: 0 0 20px rgba(233, 69, 96, 0.4);
-    }
-
-    .profile-option .name {
-      margin-top: 12px;
-      font-size: 16px;
-      font-weight: 600;
-      color: #fff;
-    }
-
-    /* ---- Verbindungs-Modal ---- */
-    .connection-modal-overlay {
-      position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: url('/assets/Wallpaper/wallpaperflare.com_wallpaper.jpg') center/cover no-repeat;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1100;
-    }
-    .connection-modal-overlay.hidden { display: none; }
-    .connection-modal-overlay::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background: rgba(0,0,0,0.55);
-    }
-    .connection-box {
-      background: rgba(26, 26, 46, 0.97);
-      border: 1px solid #7d8d9e;
-      border-radius: 16px;
-      padding: 32px 36px;
-      width: 420px;
-      max-width: 95vw;
-      display: flex;
-      flex-direction: column;
-      gap: 18px;
-      position: relative;
-      z-index: 1;
-      box-shadow: 0 8px 40px rgba(0,0,0,0.6);
-    }
-    .connection-box h2 {
-      color: #c89b7b;
-      font-size: 18px;
-      text-align: center;
-      margin-bottom: 4px;
-    }
-    .connection-box label {
-      display: block;
-      font-size: 11px;
-      text-transform: uppercase;
-      color: #888;
-      letter-spacing: 1px;
-      margin-bottom: 6px;
-    }
-    .connection-box input[type="text"] {
-      width: 100%;
-      background: #16213e;
-      border: 1px solid #7d8d9e;
-      border-radius: 8px;
-      color: #e0e0e0;
-      font-size: 14px;
-      padding: 10px 14px;
-      outline: none;
-      font-family: inherit;
-      letter-spacing: 1px;
-    }
-    .connection-box input[type="text"]:focus { border-color: #c89b7b; }
-    #connectBtn {
-      width: 100%;
-      padding: 14px;
-      background: #c89b7b;
-      color: #1a1a2e;
-      border: none;
-      border-radius: 10px;
-      font-size: 16px;
-      font-weight: 700;
-      cursor: pointer;
-      font-family: inherit;
-      transition: background 0.2s, transform 0.1s;
-      letter-spacing: 0.5px;
-    }
-    #connectBtn:hover:not(:disabled) { background: #d4aa8a; transform: scale(1.02); }
-    #connectBtn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-
-    #connectionModalStatus {
-      text-align: center;
-      font-size: 13px;
-      min-height: 18px;
-    }
-
-    /* Audio Device Modal */
-    .audio-device-modal {
-      position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.7);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1500;
-    }
-    .audio-device-modal.hidden { display: none; }
-    .audio-device-box {
-      background: #1a1a2e;
-      border: 1px solid #7d8d9e;
-      border-radius: 14px;
-      padding: 28px;
-      width: 380px;
-      display: flex;
-      flex-direction: column;
-      gap: 18px;
-    }
-    .audio-device-box h3 { color: #c89b7b; font-size: 16px; margin-bottom: 4px; }
-    .audio-device-group label {
-      display: block;
-      font-size: 11px;
-      text-transform: uppercase;
-      color: #888;
-      letter-spacing: 1px;
-      margin-bottom: 8px;
-    }
-    .audio-device-group select {
-      width: 100%;
-      background: #16213e;
-      border: 1px solid #7d8d9e;
-      border-radius: 8px;
-      color: #e0e0e0;
-      font-size: 13px;
-      padding: 8px 12px;
-      cursor: pointer;
-      outline: none;
-      font-family: inherit;
-    }
-    .audio-device-group select:focus { border-color: #c89b7b; }
-    .audio-device-btns { display: flex; justify-content: flex-end; gap: 10px; }
-    .audio-device-btns button {
-      padding: 8px 20px; border: none; border-radius: 8px;
-      font-size: 13px; cursor: pointer; font-family: inherit;
-    }
-    #audioDeviceCancel { background: #2a2a3e; color: #aaa; }
-    #audioDeviceApply { background: #c89b7b; color: #1a1a2e; font-weight: bold; }
+    /* Transitions */
+    .fade-enter-active, .fade-leave-active { transition: opacity .2s; }
+    .fade-enter-from, .fade-leave-to { opacity: 0; }
+    .slide-up-enter-active, .slide-up-leave-active { transition: all .2s; }
+    .slide-up-enter-from, .slide-up-leave-to { opacity: 0; transform: translateY(10px); }
+    .emoji-enter-active { animation: floatUp 3s ease-out forwards; }
   </style>
 </head>
+
 <body>
-  <!-- Profile Selection Modal -->
-  <div class="modal-overlay" id="usernameModal">
-    <div class="modal">
-      <div class="profile-selection">
-        <div class="profile-option" data-name="Sarah">
-          <img src="/assets/Profilbilder/images.jfif" alt="Sarah">
-          <div class="name">Sarah</div>
-        </div>
-        <div class="profile-option" data-name="Flores">
-          <img src="/assets/Profilbilder/images (1).jfif" alt="Flores">
-          <div class="name">Flores</div>
-        </div>
+<div id="app">
+
+  <!-- ── Toast Notifications ── -->
+  <p-toast position="top-right" :life="3500"></p-toast>
+
+  <!-- ── Profil Modal ── -->
+  <p-dialog v-model:visible="ui.showProfile" :closable="false" :modal="true"
+            header="Wer bist du?" style="width:380px">
+    <div class="profile-grid">
+      <div class="profile-card" v-for="name in ['Sarah','Flores']" :key="name"
+           @click="selectProfile(name)">
+        <img :src="profilePics[name]" :alt="name">
+        <div class="p-name">{{ name }}</div>
       </div>
     </div>
-  </div>
+  </p-dialog>
 
-  <!-- Verbindungs-Modal (erscheint nach Profil-Wahl) -->
-  <div class="connection-modal-overlay hidden" id="connectionModal">
-    <div class="connection-box">
-      <h2>📡 Verbindung herstellen</h2>
+  <!-- ── Verbindungs Modal ── -->
+  <p-dialog v-model:visible="ui.showConnection" :closable="false" :modal="true"
+            header="Server verbinden" style="width:420px">
+    <div style="display:flex;flex-direction:column;gap:14px;padding-top:4px">
+      <p-inputtext v-model="serverUrl" placeholder="Server-URL" style="width:100%"></p-inputtext>
+      <div style="font-size:13px" :style="{ color: connStatus.color }">{{ connStatus.text }}</div>
+    </div>
+    <template #footer>
+      <p-button label="Verbinden" icon="pi pi-send" :loading="ui.connecting"
+                @click="connectToServer" style="width:100%"></p-button>
+    </template>
+  </p-dialog>
 
+  <!-- ── Audio Gerät Modal ── -->
+  <p-dialog v-model:visible="ui.showAudioDevice" header="Audio-Einstellungen"
+            :modal="true" style="width:400px">
+    <div style="display:flex;flex-direction:column;gap:16px;padding-top:4px">
       <div>
-        <label for="serverUrlInput">Server-Adresse</label>
-        <input type="text" id="serverUrlInput" placeholder="https://lifeisstrange-production.up.railway.app">
+        <div class="section-title" style="margin-bottom:6px">Mikrofon</div>
+        <select v-model="selectedInput" class="p-inputtext" style="width:100%">
+          <option v-for="d in audioInputs" :key="d.deviceId" :value="d.deviceId">
+            {{ d.label || 'Mikrofon ' + d.deviceId.slice(0,6) }}
+          </option>
+        </select>
+      </div>
+      <div>
+        <div class="section-title" style="margin-bottom:6px">Lautsprecher</div>
+        <select v-model="selectedOutput" class="p-inputtext" style="width:100%">
+          <option v-for="d in audioOutputs" :key="d.deviceId" :value="d.deviceId">
+            {{ d.label || 'Ausgabe ' + d.deviceId.slice(0,6) }}
+          </option>
+        </select>
+      </div>
+    </div>
+    <template #footer>
+      <p-button label="Abbrechen" severity="secondary" @click="ui.showAudioDevice=false"></p-button>
+      <p-button label="Übernehmen" icon="pi pi-check" @click="applyAudioDevices"></p-button>
+    </template>
+  </p-dialog>
+
+  <!-- ── Context Menu ── -->
+  <transition name="fade">
+    <div class="ctx-menu" v-if="ctx.visible"
+         :style="{ top: ctx.y + 'px', left: ctx.x + 'px' }"
+         @mouseleave="ctx.visible=false">
+      <div class="ctx-item" @click="ctxFullscreen">
+        <i class="pi pi-window-maximize"></i> Vollbild
+      </div>
+      <div class="ctx-vol-row">
+        <div class="ctx-vol-label">
+          <span>Lautstärke</span>
+          <span>{{ Math.round(ctx.volume) }}%</span>
+        </div>
+        <p-slider v-model="ctx.volume" :min="0" :max="150" @change="ctxSetVolume"></p-slider>
+      </div>
+    </div>
+  </transition>
+
+  <!-- ── Stats Overlay ── -->
+  <transition name="fade">
+    <div class="stats-overlay" v-if="ui.showStats">
+      <div class="stats-title">📊 Verbindungs-Stats</div>
+      <div class="stats-row"><span>Auflösung</span><span>{{ stats.res }}</span></div>
+      <div class="stats-row"><span>FPS</span><span>{{ stats.fps }}</span></div>
+      <div class="stats-row"><span>Bitrate</span><span>{{ stats.bitrate }}</span></div>
+      <div class="stats-row"><span>Latenz</span><span>{{ stats.rtt }}</span></div>
+    </div>
+  </transition>
+
+  <!-- ── PTT Indicator ── -->
+  <div class="ptt-badge" v-if="pttActive">🎤 Push-to-Talk aktiv</div>
+
+  <!-- ── Header ── -->
+  <header class="header">
+    <img class="header-logo" src="/assets/icons/Life-is-Strange-logo_2_a2-Photoroom.png"
+         onerror="this.style.display='none'">
+
+    <div class="header-center">
+      <div class="call-timer" v-if="callDuration">⏱ {{ callDuration }}</div>
+      <div class="network-badge" :class="netQuality" v-if="call.active">
+        <i class="pi" :class="netQuality==='good'?'pi-wifi':netQuality==='medium'?'pi-wifi':'pi-wifi-slash'" style="font-size:11px"></i>
+        {{ netQuality==='good' ? 'Gut' : netQuality==='medium' ? 'Mittel' : netQuality==='poor' ? 'Schlecht' : '—' }}
+      </div>
+    </div>
+
+    <div class="conn-status">
+      <div class="status-dot" :class="{ connected: call.connected }"></div>
+      <span>{{ call.connected ? 'Verbunden' : call.active ? 'Warte...' : 'Getrennt' }}</span>
+    </div>
+  </header>
+
+  <!-- ── App Container ── -->
+  <div class="app-container">
+
+    <!-- Main Content -->
+    <main class="main-content" @click="ui.showEmoji=false; ui.showQuality=false">
+      <!-- Screen Share Info Bar -->
+      <div class="screen-info-bar" v-if="isScreenSharing">
+        <i class="pi pi-desktop"></i>
+        Bildschirm wird geteilt — Fenster-Audio: nur diese App (kein Echo)
       </div>
 
-      <button id="connectBtn">Verbinden</button>
+      <!-- Video/Tile Grid -->
+      <div id="video-grid" style="flex:1"></div>
 
-      <div id="connectionModalStatus"></div>
-    </div>
-  </div>
+      <!-- Empty State -->
+      <div class="empty-state" v-if="!call.active">
+        <img src="/assets/icons/Life-is-Strange-logo_2_a2-Photoroom.png"
+             style="height:80px;opacity:.3;object-fit:contain"
+             onerror="this.style.display='none'">
+        <i class="pi pi-phone" v-if="true"></i>
+        <p>Klicke auf <strong>Beitreten</strong> um den Call zu starten</p>
+      </div>
 
-  <!-- Header -->
-  <div class="header">
-    <img src="/assets/icons/Life-is-Strange-logo_2_a2-Photoroom.png" alt="Logo" class="logo">
-    <div class="connection-status">
-      <div class="status-dot" id="statusDot"></div>
-      <span id="statusText">Nicht verbunden</span>
-    </div>
-  </div>
+      <!-- Emoji Overlay -->
+      <div class="emoji-overlay">
+        <transition-group name="emoji">
+          <div v-for="e in activeEmojis" :key="e.id" class="floating-emoji"
+               :style="{ left: e.x + '%', bottom: '20%' }">
+            {{ e.emoji }}
+          </div>
+        </transition-group>
+      </div>
 
-  <!-- App Container -->
-  <div class="app-container">
-    <!-- Main Content -->
-    <div class="main-content">
-      <!-- Video Grid -->
-      <div class="video-grid" id="videoGrid">
-        <div class="empty-state" id="emptyState">
-          <svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
-          <p>Klicke "Join" um dem Call beizutreten</p>
+      <!-- Sticker deco -->
+      <div class="sticker-deco"></div>
+    </main>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+
+      <!-- DBD Queue -->
+      <div class="sidebar-section">
+        <div class="section-title">⚔️ DBD Killer Queue — Frankfurt</div>
+        <div class="queue-card">
+          <div class="queue-time">
+            <span v-if="queue.loading"><i class="pi pi-spin pi-spinner"></i></span>
+            <span v-else-if="queue.time">{{ queue.time }}</span>
+            <span v-else-if="queue.error" style="font-size:14px;color:var(--lis-muted)">{{ queue.error }}</span>
+            <span v-else style="color:var(--lis-muted)">—</span>
+          </div>
+          <div class="queue-meta">{{ queue.mode || 'Live' }}</div>
+          <p-button label="Aktualisieren" icon="pi pi-refresh" size="small" outlined
+                    :loading="queue.loading" @click="fetchQueue" style="width:100%"></p-button>
         </div>
       </div>
 
-      <!-- Control Bar -->
-      <div class="control-bar">
-        <button class="control-btn" id="joinBtn" title="Join Call">
-          <svg viewBox="0 0 24 24"><path d="M20 15.5c-1.25 0-2.45-.2-3.57-.57-.35-.11-.74-.03-1.02.24l-2.2 2.2c-2.83-1.44-5.15-3.75-6.59-6.59l2.2-2.21c.28-.26.36-.65.25-1C8.7 6.45 8.5 5.25 8.5 4c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1 0 9.39 7.61 17 17 17 .55 0 1-.45 1-1v-3.5c0-.55-.45-1-1-1z"/></svg>
-        </button>
-        <button class="control-btn" id="muteBtn" title="Mute/Unmute" disabled>
-          <svg viewBox="0 0 24 24" id="muteIcon"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
-        </button>
-        <div class="quality-wrapper">
-          <button class="quality-btn" id="qualityBtn" title="Stream Qualität">
-            <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM10 17l-3.5-3.5 1.41-1.41L10 14.17l4.59-4.58L16 11l-6 6z"/></svg>
-            <span class="quality-badge" id="qualityBadge">HD</span>
-          </button>
-          <div class="quality-dropdown" id="qualityDropdown">
-            <button class="quality-option" data-quality="low">
-              <span class="q-label">Niedrig</span>
-              <span class="q-detail">720p 30fps</span>
-            </button>
-            <button class="quality-option selected" data-quality="medium">
-              <span class="q-label">Mittel</span>
-              <span class="q-detail">1080p 30fps</span>
-            </button>
-            <button class="quality-option" data-quality="high">
-              <span class="q-label">Hoch</span>
-              <span class="q-detail">1080p 60fps</span>
-            </button>
-            <button class="quality-option" data-quality="ultra">
-              <span class="q-label">Ultra</span>
-              <span class="q-detail">1440p 60fps</span>
-            </button>
+      <!-- Participants -->
+      <div class="sidebar-section">
+        <div class="section-title">
+          Im Call
+          <span style="background:var(--lis-accent);color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;margin-left:6px">
+            {{ participantCount }}
+          </span>
+        </div>
+        <div>
+          <div v-for="(p, id) in participants" :key="id"
+               class="participant-item" :class="{ speaking: p.speaking }">
+            <div class="participant-avatar">
+              <img v-if="p.profilePic" :src="p.profilePic" :alt="p.username">
+              <span v-else>{{ p.username[0] }}</span>
+            </div>
+            <span class="participant-name">{{ p.username }}{{ p.isLocal ? ' (Du)' : '' }}</span>
+            <div class="participant-icons">
+              <i class="pi pi-microphone-slash participant-icon" v-if="p.muted"></i>
+              <i class="pi pi-desktop participant-icon" v-if="p.sharing" style="color:var(--lis-accent2)"></i>
+            </div>
           </div>
         </div>
-        <button class="control-btn" id="screenBtn" title="Screen Share" disabled>
-          <svg viewBox="0 0 24 24"><path d="M20 18c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/></svg>
-        </button>
-        <button class="control-btn danger" id="stopScreenBtn" title="Stop Screen Share" style="display: none;">
-          <svg viewBox="0 0 24 24"><path d="M21.79 18l2 2H24v-2h-2.21zM1.11 2.98l1.55 1.56c-.41.37-.66.89-.66 1.48V16c0 1.1.9 2 2.01 2H0v2h18.13l2.71 2.71 1.41-1.41L2.52 1.57 1.11 2.98zM4 6.02h.13l4.95 4.93C7.94 12.07 7.31 13.52 7.31 15c0 .62.13 1.21.33 1.76L9.59 15H8v-2h3.03l6.12 6.12-.01.01L4 19.13v-13.1zM20 6v10.15l1.95 1.95c.03-.17.05-.36.05-.1V6c0-1.1-.9-2-2-2H5.4l2 2H20z"/></svg>
-        </button>
-        <button class="control-btn" id="statsBtn" title="Show Stats">
-          <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
-        </button>
-        <button class="control-btn" id="queueBtn" title="Killer Queue anzeigen">
-          <svg viewBox="0 0 24 24"><path d="M3 5h18v2H3V5zm0 6h12v2H3v-2zm0 6h8v2H3v-2zm14.59-4.59L16.17 14l3.59 3.59L17 20.17l-1.41-1.41L17.76 16l-2.17-2.17L17 12.41l.59.59z"/></svg>
-        </button>
-        <button class="control-btn danger" id="leaveBtn" title="Leave Call" disabled>
-          <svg viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.68-1.36-2.66-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
-        </button>
-        <button class="control-btn" id="audioDeviceBtn" title="Audio Gerät wählen">
-          <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0-9 9v7c0 1.1.9 2 2 2h1v-8H4v-1a8 8 0 0 1 16 0v1h-2v8h1c1.1 0 2-.9 2-2v-7a9 9 0 0 0-9-9z"/></svg>
-        </button>
       </div>
-    </div>
 
-    <!-- Chat Sidebar -->
-    <div class="chat-sidebar" id="chatSidebar">
-      <!-- Participants Panel -->
-      <div class="participants-panel" id="participantsPanel">
-        <div class="participants-header">
-          <span>Im Call</span>
-          <span class="count" id="participantCount">0</span>
+      <!-- Chat -->
+      <div class="chat-panel">
+        <div class="chat-title">
+          💬 Chat
+          <span v-if="unreadCount" style="background:var(--lis-accent);color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;margin-left:6px">
+            {{ unreadCount }}
+          </span>
         </div>
-        <div id="participantsList">
-          <!-- Participants appear here -->
+        <div class="chat-messages" ref="chatEl">
+          <div v-for="msg in chatMessages" :key="msg.id"
+               class="chat-msg" :class="msg.type === 'system' ? 'system' : msg.isOwn ? 'own' : 'other'">
+            <div class="chat-meta" v-if="msg.type !== 'system'">{{ msg.username }} · {{ msg.time }}</div>
+            <div class="chat-text">{{ msg.text }}</div>
+          </div>
+        </div>
+        <div class="chat-input-row">
+          <p-inputtext v-model="chatInput" placeholder="Nachricht..."
+                       @keyup.enter="sendMessage" :maxlength="500" style="flex:1"></p-inputtext>
+          <p-button icon="pi pi-send" @click="sendMessage" :disabled="!chatInput.trim()"></p-button>
         </div>
       </div>
-      
-      <div class="chat-header">
-        <h3>💬 Chat</h3>
-      </div>
-      <div class="chat-messages" id="chatMessages">
-        <!-- Messages appear here -->
-      </div>
-      <div class="chat-input-container">
-        <div class="chat-input-wrapper">
-          <input type="text" class="chat-input" id="chatInput" placeholder="Nachricht schreiben..." maxlength="500">
-          <button class="chat-send" id="chatSend">
-            <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
-          </button>
-        </div>
-      </div>
-    </div>
+    </aside>
   </div>
 
-  <!-- Context Menu -->
-  <div class="context-menu" id="contextMenu">
-    <div class="context-menu-item" id="contextFullscreen">
-      <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
-      <span>Vollbild</span>
+  <!-- ── Control Bar ── -->
+  <div class="control-bar" @click.stop>
+
+    <!-- Join -->
+    <p-button v-if="!call.active" label="Beitreten" icon="pi pi-phone"
+              @click="openConnectionModal" severity="success"></p-button>
+
+    <!-- Audio group -->
+    <div class="ctrl-group" v-if="call.active">
+      <!-- Mute -->
+      <p-button :icon="isMuted ? 'pi pi-microphone-slash' : 'pi pi-microphone'"
+                @click="toggleMute"
+                :severity="isMuted ? 'danger' : 'secondary'"
+                v-tooltip.top="isMuted ? 'Stummschaltung aufheben' : 'Stummschalten'"
+                class="p-button-icon-only"></p-button>
+
+      <!-- Push-to-talk toggle -->
+      <p-button :icon="pttEnabled ? 'pi pi-lock' : 'pi pi-lock-open'"
+                @click="togglePTT"
+                :severity="pttEnabled ? 'warning' : 'secondary'"
+                v-tooltip.top="pttEnabled ? 'Push-to-Talk: AN (Leertaste)' : 'Push-to-Talk: AUS'"
+                class="p-button-icon-only"></p-button>
     </div>
-    <div class="context-menu-divider"></div>
-    <div class="context-menu-volume">
-      <label>Lautstärke</label>
-      <div class="volume-slider-container">
-        <input type="range" id="contextVolumeSlider" min="0" max="100" value="100">
-        <span class="volume-value" id="contextVolumeValue">100%</span>
+
+    <div class="ctrl-divider" v-if="call.active"></div>
+
+    <!-- Screen share group -->
+    <div class="ctrl-group" v-if="call.active">
+      <p-button v-if="!isScreenSharing" icon="pi pi-desktop" @click="startScreenShare"
+                severity="secondary" v-tooltip.top="'Bildschirm teilen'"
+                class="p-button-icon-only"></p-button>
+      <p-button v-else icon="pi pi-stop-circle" @click="stopScreenShare"
+                severity="danger" v-tooltip.top="'Screen-Share beenden'"
+                class="p-button-icon-only"></p-button>
+    </div>
+
+    <div class="ctrl-divider" v-if="call.active"></div>
+
+    <!-- Extras group -->
+    <div class="ctrl-group">
+      <!-- Emoji picker -->
+      <div class="emoji-picker-wrap" v-if="call.active">
+        <p-button icon="pi pi-face-smile" severity="secondary" @click.stop="ui.showEmoji=!ui.showEmoji"
+                  v-tooltip.top="'Emoji-Reaktion'" class="p-button-icon-only"></p-button>
+        <transition name="slide-up">
+          <div class="emoji-picker" v-if="ui.showEmoji" @click.stop>
+            <div class="emoji-btn" v-for="e in emojis" :key="e" @click="sendEmoji(e)">{{ e }}</div>
+          </div>
+        </transition>
       </div>
+
+      <!-- Quality -->
+      <div class="emoji-picker-wrap">
+        <p-button :label="qualityLabel" severity="secondary" @click.stop="ui.showQuality=!ui.showQuality"
+                  v-tooltip.top="'Videoqualität'" size="small"></p-button>
+        <transition name="slide-up">
+          <div class="quality-drop" v-if="ui.showQuality" @click.stop>
+            <div v-for="(preset, key) in qualityPresets" :key="key" class="quality-item"
+                 :class="{ active: currentQuality===key }" @click="setQuality(key)">
+              {{ preset.label }} · {{ preset.fps }}fps
+            </div>
+          </div>
+        </transition>
+      </div>
+
+      <!-- Audio devices -->
+      <p-button icon="pi pi-cog" severity="secondary" @click="openAudioDevices"
+                v-tooltip.top="'Audio-Einstellungen'" class="p-button-icon-only"></p-button>
+
+      <!-- Stats -->
+      <p-button :icon="ui.showStats ? 'pi pi-chart-bar' : 'pi pi-chart-line'" severity="secondary"
+                @click="ui.showStats=!ui.showStats" v-tooltip.top="'Verbindungs-Stats'"
+                class="p-button-icon-only"></p-button>
     </div>
+
+    <div class="ctrl-divider"></div>
+
+    <!-- DBD Queue button (quick access) -->
+    <p-button icon="pi pi-clock" severity="secondary" @click="fetchQueue"
+              :loading="queue.loading" v-tooltip.top="'DBD Queue aktualisieren'"
+              class="p-button-icon-only"></p-button>
+
+    <div class="ctrl-divider" v-if="call.active"></div>
+
+    <!-- Leave -->
+    <p-button v-if="call.active" icon="pi pi-sign-out" severity="danger"
+              @click="leaveCall" v-tooltip.top="'Call verlassen'"
+              class="p-button-icon-only"></p-button>
   </div>
 
-  <!-- Stats Overlay -->
-  <div class="stats-overlay" id="statsOverlay">
-    <div class="stat"><span>Resolution:</span><span class="value" id="statRes">-</span></div>
-    <div class="stat"><span>FPS:</span><span class="value" id="statFps">-</span></div>
-    <div class="stat"><span>Bitrate:</span><span class="value" id="statBitrate">-</span></div>
-    <div class="stat"><span>Latency:</span><span class="value" id="statLatency">-</span></div>
-  </div>
+</div>
 
-  <!-- Audio Device Modal -->
-  <div class="audio-device-modal hidden" id="audioDeviceModal">
-    <div class="audio-device-box">
-      <h3>Audio-Geräte-Auswahl</h3>
-      <div class="audio-device-group">
-        <label for="inputDevice">Eingabegerät</label>
-        <select id="inputDevice"></select>
-      </div>
-      <div class="audio-device-group">
-        <label for="outputDevice">Ausgabegerät</label>
-        <select id="outputDevice"></select>
-      </div>
-      <div class="audio-device-btns">
-        <button id="audioDeviceCancel">Abbrechen</button>
-        <button id="audioDeviceApply">Anwenden</button>
-      </div>
-    </div>
-  </div>
-
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="client.js"></script>
+<!-- Scripts -->
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/primevue@3/umd/primevue.min.js"></script>
+<script src="https://unpkg.com/primevue@3/umd/toastservice.min.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>

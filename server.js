@@ -39,69 +39,70 @@ const waitingRoom = {
   users: new Map()
 };
 
-// ---- Dead by Daylight Queue API (behalten) ----
-const regionInfo = {
-  "Europe": {
-    "eu-central-1": { name: "Germany, Frankfurt" },
-    "eu-west-1": { name: "Ireland, Dublin" },
-    "eu-west-2": { name: "United Kingdom, London" }
-  }
-};
+// ---- Dead by Daylight Queue API ----
+// Versucht mehrere API-Endpunkte falls einer nicht erreichbar ist.
+const DBD_APIS = [
+  "https://api.deadbyqueue.com",
+  "https://api2.deadbyqueue.com",
+];
 
-app.get("/api/killer-queue", async (req, res) => {
-  try {
+async function fetchDbdQueue() {
+  const headers = { "Accept": "application/json", "User-Agent": "Mozilla/5.0 LifeIsStrangeCall/1.5" };
+  let lastErr = null;
+
+  for (const base of DBD_APIS) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    const tid = setTimeout(() => controller.abort(), 8000);
+    try {
+      const [rRes, qRes] = await Promise.all([
+        fetch(`${base}/regions`, { signal: controller.signal, headers }),
+        fetch(`${base}/queues`,  { signal: controller.signal, headers }),
+      ]);
+      clearTimeout(tid);
+      if (!rRes.ok || !qRes.ok) continue;
 
-    const [regionsRes, queuesRes] = await Promise.all([
-      fetch("https://api2.deadbyqueue.com/regions", {
-        signal: controller.signal,
-        headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
-      }),
-      fetch("https://api2.deadbyqueue.com/queues", {
-        signal: controller.signal,
-        headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
-      })
-    ]);
+      const regions = (await rRes.json())?.regions ?? {};
+      const rawQ    = (await qRes.json())?.queues  ?? {};
+      const mode    = ["live","live-event","ptb","ptb-event"].find(m => rawQ[m]) ?? Object.keys(rawQ)[0];
+      if (!mode) continue;
 
-    clearTimeout(timeout);
+      const rc        = "eu-central-1";
+      const isOnline  = Boolean(regions[rc]);
+      const killerRaw = rawQ[mode]?.[rc]?.killer?.time;
 
-    if (!regionsRes.ok || !queuesRes.ok) {
-      return res.status(502).json({ error: "Upstream Fehler" });
+      let killerQueue;
+      if (!isOnline)                              killerQueue = "Offline";
+      else if (killerRaw == null || killerRaw === "x") killerQueue = "Keine Daten";
+      else {
+        const secs = parseInt(killerRaw, 10);
+        killerQueue = isFinite(secs)
+          ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`
+          : "Unbekannt";
+      }
+      return { killerQueue, mode, regionCode: rc, region: "Frankfurt, DE" };
+    } catch (e) {
+      clearTimeout(tid);
+      lastErr = e;
     }
+  }
+  throw lastErr ?? new Error("Alle APIs nicht erreichbar");
+}
 
-    const regionsData = await regionsRes.json();
-    const queuesData = await queuesRes.json();
+app.get("/api/killer-queue", async (_req, res) => {
+  try {
+    const data = await fetchDbdQueue();
+    res.json(data);
 
-    const regions = regionsData?.regions || {};
-    const queues = queuesData?.queues || {};
-    const mode = ["live", "live-event", "ptb", "ptb-event"].find(m => queues[m]) || Object.keys(queues)[0];
-
-    if (!mode) return res.status(500).json({ error: "Keine Queue-Modi" });
-
-    const regionCode = "eu-central-1";
-    const isOnline = Boolean(regions[regionCode]);
-    const killerRaw = queues[mode]?.[regionCode]?.killer?.time ?? "x";
-
-    let killerQueue;
-    if (!isOnline || killerRaw === "x" || killerRaw == null) {
-      killerQueue = isOnline ? "Fehler" : "Offline";
-    } else {
-      const val = parseInt(killerRaw, 10);
-      if (!isFinite(val)) { killerQueue = "Unbekannt"; }
-      else { killerQueue = `${Math.floor(val / 60)}:${String(val % 60).padStart(2, "0")}`; }
-    }
-
-    res.json({ killerQueue, mode, regionCode, region: "Germany, Frankfurt" });
   } catch (err) {
-    res.status(500).json({ error: err?.name === "AbortError" ? "Timeout" : "Fehler" });
+    const msg = err?.name === "AbortError" ? "Timeout (API nicht erreichbar)" : (err?.message ?? "Fehler");
+    res.status(500).json({ error: msg });
   }
 });
 
 // ---- Status API (Debug) ----
 app.get("/api/status", (_req, res) => {
   res.json({
-    version: "1.4.0",
+    version: "1.5.0",
     waitingRoom: waitingRoom.users.size,
     users: Array.from(waitingRoom.users.values()).map(u => u.username)
   });
