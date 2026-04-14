@@ -5,7 +5,7 @@
 // ---- Server-Verbindung ----
 // Standardmäßig Railway (gemeinsamer Server für unterschiedliche Netzwerke).
 // Im Verbindungs-Modal kann eine andere URL eingegeben werden.
-const DEFAULT_SERVER_URL = "";   // leer = User muss URL eintragen
+const DEFAULT_SERVER_URL = "https://lifeisstrangecall.onrender.com";
 
 // Socket.IO-Verbindung wird erst nach Modal-Bestätigung aufgebaut.
 let socket = null;
