@@ -5,7 +5,7 @@
 // ---- Server-Verbindung ----
 // Standardmäßig Railway (gemeinsamer Server für unterschiedliche Netzwerke).
 // Im Verbindungs-Modal kann eine andere URL eingegeben werden.
-const DEFAULT_SERVER_URL = "http://localhost:3000";
+const DEFAULT_SERVER_URL = "";   // leer = User muss URL eintragen
 
 // Socket.IO-Verbindung wird erst nach Modal-Bestätigung aufgebaut.
 let socket = null;
@@ -248,37 +248,49 @@ const serverUrlInput   = document.getElementById("serverUrlInput");
 const connectBtn       = document.getElementById("connectBtn");
 const connectionStatus = document.getElementById("connectionModalStatus");
 
-// ---- Lokale IPs via Electron IPC laden ----
-(async function loadLocalIPs() {
-  const listEl = document.getElementById("localIpList");
-  if (!listEl) return;
-  try {
-    // nodeIntegration ist aktiv → ipcRenderer verfügbar
-    const { ipcRenderer } = require("electron");
-    const ips = await ipcRenderer.invoke("get-local-ips");
-    if (ips && ips.length > 0) {
-      listEl.innerHTML = ips.map(ip =>
-        `<div style="display:flex;align-items:center;gap:8px;margin:2px 0">
-           <code style="background:rgba(255,255,255,.08);padding:2px 8px;border-radius:4px;font-size:13px;color:#4ade80">${ip}:3000</code>
-           <span style="font-size:11px;cursor:pointer;color:#c89b7b" onclick="navigator.clipboard.writeText('http://${ip}:3000').then(()=>this.textContent='✓ kopiert!').catch(()=>{})">📋 kopieren</span>
-         </div>`
-      ).join("");
-    } else {
-      listEl.textContent = "Keine lokale IP gefunden";
+// ---- Render.com Link im Electron öffnen ----
+(function() {
+  const link = document.getElementById("openRenderLink");
+  if (!link) return;
+  link.onclick = (e) => {
+    e.preventDefault();
+    try {
+      const { shell } = require("electron");
+      shell.openExternal("https://render.com");
+    } catch {
+      window.open("https://render.com", "_blank");
     }
-  } catch {
-    // Kein Electron-Kontext (z.B. Browser) → kein IPC
-    listEl.textContent = "localhost:3000";
-  }
+  };
 })();
+
+// ---- Gespeicherte URL ins Input vorausfüllen ----
+if (serverUrlInput && currentServerUrl) {
+  serverUrlInput.value = currentServerUrl;
+}
 
 let selectedInputDeviceId  = null;
 let selectedOutputDeviceId = null;
 let currentContextTarget   = null;
 
 // ============================================================
-// Socket.IO Verbindung aufbauen
+// Socket.IO Verbindung aufbauen (mit Wakeup-Retry für Render free tier)
 // ============================================================
+let wakeupInterval = null;
+let wakeupAttempts = 0;
+const MAX_WAKEUP_ATTEMPTS = 12; // 12 × 5s = 60s max
+
+function stopWakeup() {
+  if (wakeupInterval) { clearInterval(wakeupInterval); wakeupInterval = null; }
+  wakeupAttempts = 0;
+}
+
+async function pingServer(url) {
+  try {
+    const r = await fetch(url + "/api/status", { signal: AbortSignal.timeout(4000) });
+    return r.ok;
+  } catch { return false; }
+}
+
 function connectSocket(url) {
   if (socket) {
     socket.removeAllListeners();
@@ -286,11 +298,11 @@ function connectSocket(url) {
   }
 
   socket = io(url, {
-    transports: ["polling", "websocket"],  // polling-first — zuverlässiger auf Railway/Heroku
+    transports: ["polling", "websocket"],
     reconnection: true,
     reconnectionAttempts: Infinity,
-    reconnectionDelay: 1000,
-    reconnectionDelayMax: 8000,
+    reconnectionDelay: 2000,
+    reconnectionDelayMax: 10000,
     timeout: 20000,
   });
 
@@ -326,12 +338,35 @@ function connectSocket(url) {
 
   socket.on("connect_error", (err) => {
     console.error("✗ Verbindungsfehler:", err.message);
-    const isXhrPoll = err.message?.toLowerCase().includes("xhr") || err.message?.toLowerCase().includes("poll");
-    const hint = isXhrPoll
-      ? "Server nicht erreichbar. Prüfe die IP-Adresse und ob die andere Person die App geöffnet hat."
-      : "Verbindungsfehler: " + err.message;
-    setConnectionModalStatus(hint, "red");
-    if (connectBtn) { connectBtn.disabled = false; connectBtn.textContent = "Erneut versuchen"; }
+    const isNetworkErr = err.message?.toLowerCase().includes("xhr")
+                      || err.message?.toLowerCase().includes("poll")
+                      || err.message?.toLowerCase().includes("timeout")
+                      || err.message?.toLowerCase().includes("network");
+
+    if (isNetworkErr && shouldJoinCall && !wakeupInterval) {
+      // Render free tier schläft nach 15 Min — automatisch aufwecken
+      wakeupAttempts = 0;
+      setConnectionModalStatus("⏳ Server startet… (bis zu 30 Sek.)", "orange");
+      wakeupInterval = setInterval(async () => {
+        wakeupAttempts++;
+        setConnectionModalStatus(`⏳ Server startet… (${wakeupAttempts}/${MAX_WAKEUP_ATTEMPTS})`, "orange");
+        const alive = await pingServer(currentServerUrl);
+        if (alive) {
+          stopWakeup();
+          setConnectionModalStatus("✓ Server erreichbar — verbinde…", "green");
+          // Socket neu verbinden
+          socket.connect();
+        } else if (wakeupAttempts >= MAX_WAKEUP_ATTEMPTS) {
+          stopWakeup();
+          shouldJoinCall = false;
+          setConnectionModalStatus("✗ Server antwortet nicht. Prüfe die URL.", "red");
+          if (connectBtn) { connectBtn.disabled = false; connectBtn.textContent = "Erneut versuchen"; }
+        }
+      }, 5000);
+    } else if (!wakeupInterval) {
+      setConnectionModalStatus("Verbindungsfehler: " + err.message, "red");
+      if (connectBtn) { connectBtn.disabled = false; connectBtn.textContent = "Erneut versuchen"; }
+    }
   });
 
   // ---- Call-Events ----
@@ -436,16 +471,38 @@ if (connectBtn) {
       setConnectionModalStatus("Bitte zuerst ein Profil wählen.", "red");
       return;
     }
-    const url = (serverUrlInput?.value?.trim()) || DEFAULT_SERVER_URL;
+    const rawUrl = (serverUrlInput?.value?.trim()) || "";
+    if (!rawUrl) {
+      setConnectionModalStatus("Bitte eine Server-URL eingeben.", "red");
+      return;
+    }
+    // http:// hinzufügen falls fehlt
+    const url = rawUrl.startsWith("http") ? rawUrl : "https://" + rawUrl;
+    if (serverUrlInput) serverUrlInput.value = url;
+
     currentServerUrl = url;
     localStorage.setItem("serverUrl", url);
+    stopWakeup();
+
     connectBtn.disabled = true;
     connectBtn.textContent = "Verbinde...";
-    setConnectionModalStatus("Verbinde mit Server...", "orange");
+    setConnectionModalStatus("Verbinde mit Server…", "orange");
 
     shouldJoinCall = true;
     connectSocket(url);
   };
+}
+
+// Hint wenn URL gespeichert ist
+if (serverUrlInput) {
+  const savedUrl = localStorage.getItem("serverUrl");
+  const hintEl   = document.getElementById("serverHint");
+  if (savedUrl && hintEl) {
+    hintEl.innerHTML = `Zuletzt: <span style="color:#c89b7b">${savedUrl}</span>`;
+  }
+  serverUrlInput.addEventListener("input", () => {
+    if (hintEl) hintEl.innerHTML = "";
+  });
 }
 
 // ============================================================
@@ -1297,6 +1354,7 @@ function stopScreenShare() {
 leaveBtn.onclick = () => cleanup();
 
 function cleanup() {
+  stopWakeup();
   if (peerConnection) socket?.emit("leave-call");
 
   if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
