@@ -1083,9 +1083,17 @@
     <div class="connection-box">
       <h2>📡 Verbindung herstellen</h2>
 
+      <!-- Host-Info Box -->
+      <div style="background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.2);border-radius:10px;padding:12px 14px">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#4ade80;font-weight:700;margin-bottom:6px">🖥️ Dein lokaler Server</div>
+        <div id="localIpList" style="font-size:12px;color:#8899aa">Wird geladen…</div>
+        <div style="font-size:11px;color:#666;margin-top:6px">Teile eine dieser Adressen mit der anderen Person</div>
+      </div>
+
       <div>
         <label for="serverUrlInput">Server-Adresse</label>
-        <input type="text" id="serverUrlInput" placeholder="https://lifeisstrange-production.up.railway.app">
+        <input type="text" id="serverUrlInput" placeholder="http://192.168.x.x:3000">
+        <div style="font-size:11px;color:#666;margin-top:4px">Gib deine eigene IP ein (Du bist Host) oder die IP der anderen Person</div>
       </div>
 
       <button id="connectBtn">Verbinden</button>

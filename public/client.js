@@ -5,7 +5,7 @@
 // ---- Server-Verbindung ----
 // Standardmäßig Railway (gemeinsamer Server für unterschiedliche Netzwerke).
 // Im Verbindungs-Modal kann eine andere URL eingegeben werden.
-const DEFAULT_SERVER_URL = "https://lifeisstrange-production.up.railway.app";
+const DEFAULT_SERVER_URL = "http://localhost:3000";
 
 // Socket.IO-Verbindung wird erst nach Modal-Bestätigung aufgebaut.
 let socket = null;
@@ -248,6 +248,30 @@ const serverUrlInput   = document.getElementById("serverUrlInput");
 const connectBtn       = document.getElementById("connectBtn");
 const connectionStatus = document.getElementById("connectionModalStatus");
 
+// ---- Lokale IPs via Electron IPC laden ----
+(async function loadLocalIPs() {
+  const listEl = document.getElementById("localIpList");
+  if (!listEl) return;
+  try {
+    // nodeIntegration ist aktiv → ipcRenderer verfügbar
+    const { ipcRenderer } = require("electron");
+    const ips = await ipcRenderer.invoke("get-local-ips");
+    if (ips && ips.length > 0) {
+      listEl.innerHTML = ips.map(ip =>
+        `<div style="display:flex;align-items:center;gap:8px;margin:2px 0">
+           <code style="background:rgba(255,255,255,.08);padding:2px 8px;border-radius:4px;font-size:13px;color:#4ade80">${ip}:3000</code>
+           <span style="font-size:11px;cursor:pointer;color:#c89b7b" onclick="navigator.clipboard.writeText('http://${ip}:3000').then(()=>this.textContent='✓ kopiert!').catch(()=>{})">📋 kopieren</span>
+         </div>`
+      ).join("");
+    } else {
+      listEl.textContent = "Keine lokale IP gefunden";
+    }
+  } catch {
+    // Kein Electron-Kontext (z.B. Browser) → kein IPC
+    listEl.textContent = "localhost:3000";
+  }
+})();
+
 let selectedInputDeviceId  = null;
 let selectedOutputDeviceId = null;
 let currentContextTarget   = null;
@@ -302,7 +326,12 @@ function connectSocket(url) {
 
   socket.on("connect_error", (err) => {
     console.error("✗ Verbindungsfehler:", err.message);
-    setConnectionModalStatus("Verbindungsfehler: " + err.message, "red");
+    const isXhrPoll = err.message?.toLowerCase().includes("xhr") || err.message?.toLowerCase().includes("poll");
+    const hint = isXhrPoll
+      ? "Server nicht erreichbar. Prüfe die IP-Adresse und ob die andere Person die App geöffnet hat."
+      : "Verbindungsfehler: " + err.message;
+    setConnectionModalStatus(hint, "red");
+    if (connectBtn) { connectBtn.disabled = false; connectBtn.textContent = "Erneut versuchen"; }
   });
 
   // ---- Call-Events ----
