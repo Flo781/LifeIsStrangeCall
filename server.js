@@ -40,62 +40,92 @@ const waitingRoom = {
 };
 
 // ---- Dead by Daylight Queue API ----
-// Versucht mehrere API-Endpunkte falls einer nicht erreichbar ist.
-const DBD_APIS = [
-  "https://api.deadbyqueue.com",
-  "https://api2.deadbyqueue.com",
+// Mehrere Quellen werden nacheinander versucht.
+const DBD_SOURCES = [
+  // Primär: deadbyqueue.com
+  { base: "https://api.deadbyqueue.com",  type: "deadbyqueue" },
+  { base: "https://api2.deadbyqueue.com", type: "deadbyqueue" },
+  // Fallback: dbd.tricky.lol (community API)
+  { base: "https://dbd.tricky.lol",       type: "tricky" },
 ];
 
+async function tryFetch(url, timeout = 6000) {
+  const ctrl = new AbortController();
+  const tid  = setTimeout(() => ctrl.abort(), timeout);
+  try {
+    const r = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { "Accept": "application/json", "User-Agent": "LifeIsStrangeCall/1.5" },
+    });
+    clearTimeout(tid);
+    return r;
+  } catch (e) {
+    clearTimeout(tid);
+    throw e;
+  }
+}
+
 async function fetchDbdQueue() {
-  const headers = { "Accept": "application/json", "User-Agent": "Mozilla/5.0 LifeIsStrangeCall/1.5" };
+  const rc = "eu-central-1";
   let lastErr = null;
 
-  for (const base of DBD_APIS) {
-    const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 8000);
+  for (const src of DBD_SOURCES) {
     try {
-      const [rRes, qRes] = await Promise.all([
-        fetch(`${base}/regions`, { signal: controller.signal, headers }),
-        fetch(`${base}/queues`,  { signal: controller.signal, headers }),
-      ]);
-      clearTimeout(tid);
-      if (!rRes.ok || !qRes.ok) continue;
+      if (src.type === "deadbyqueue") {
+        const [rRes, qRes] = await Promise.all([
+          tryFetch(`${src.base}/regions`),
+          tryFetch(`${src.base}/queues`),
+        ]);
+        if (!rRes.ok || !qRes.ok) continue;
 
-      const regions = (await rRes.json())?.regions ?? {};
-      const rawQ    = (await qRes.json())?.queues  ?? {};
-      const mode    = ["live","live-event","ptb","ptb-event"].find(m => rawQ[m]) ?? Object.keys(rawQ)[0];
-      if (!mode) continue;
+        const regions = (await rRes.json())?.regions ?? {};
+        const rawQ    = (await qRes.json())?.queues  ?? {};
+        const mode    = ["live","live-event","ptb","ptb-event"].find(m => rawQ[m]) ?? Object.keys(rawQ)[0];
+        if (!mode) continue;
 
-      const rc        = "eu-central-1";
-      const isOnline  = Boolean(regions[rc]);
-      const killerRaw = rawQ[mode]?.[rc]?.killer?.time;
+        const isOnline  = Boolean(regions[rc]);
+        const killerRaw = rawQ[mode]?.[rc]?.killer?.time;
+        let killerQueue;
+        if (!isOnline)                                     killerQueue = "Offline";
+        else if (killerRaw == null || killerRaw === "x")   killerQueue = "Keine Daten";
+        else {
+          const secs = parseInt(killerRaw, 10);
+          killerQueue = isFinite(secs)
+            ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`
+            : "Unbekannt";
+        }
+        return { killerQueue, mode, region: "Frankfurt, DE" };
 
-      let killerQueue;
-      if (!isOnline)                              killerQueue = "Offline";
-      else if (killerRaw == null || killerRaw === "x") killerQueue = "Keine Daten";
-      else {
-        const secs = parseInt(killerRaw, 10);
-        killerQueue = isFinite(secs)
+      } else if (src.type === "tricky") {
+        // dbd.tricky.lol hat eine andere API-Struktur
+        const r = await tryFetch(`${src.base}/api/v1/queues`);
+        if (!r.ok) continue;
+        const data = await r.json();
+        // Versuche killerQueue aus den Daten zu extrahieren
+        const killer = data?.eu?.killer ?? data?.queues?.eu?.killer ?? data?.killer;
+        if (killer == null) continue;
+        const secs = parseInt(killer, 10);
+        const killerQueue = isFinite(secs)
           ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`
-          : "Unbekannt";
+          : String(killer);
+        return { killerQueue, mode: "live", region: "Frankfurt, DE" };
       }
-      return { killerQueue, mode, regionCode: rc, region: "Frankfurt, DE" };
     } catch (e) {
-      clearTimeout(tid);
       lastErr = e;
     }
   }
-  throw lastErr ?? new Error("Alle APIs nicht erreichbar");
+  throw lastErr ?? new Error("Alle Queue-APIs nicht erreichbar");
 }
 
 app.get("/api/killer-queue", async (_req, res) => {
   try {
     const data = await fetchDbdQueue();
     res.json(data);
-
   } catch (err) {
-    const msg = err?.name === "AbortError" ? "Timeout (API nicht erreichbar)" : (err?.message ?? "Fehler");
-    res.status(500).json({ error: msg });
+    const msg = err?.name === "AbortError"
+      ? "Timeout — Queue-API nicht erreichbar"
+      : (err?.message ?? "Unbekannter Fehler");
+    res.status(503).json({ error: msg });
   }
 });
 
